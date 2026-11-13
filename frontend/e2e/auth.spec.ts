@@ -1,0 +1,50 @@
+import { expect, test } from "@playwright/test";
+
+test("sign-in validation, session refresh, logout, and fresh board state", async ({ page, context, request }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/");
+  await expect(page.getByLabel("Username", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(0);
+  const html = await (await page.request.get("/")).text();
+  expect(html).not.toContain("A warmer welcome");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: `test-results/sign-in-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByLabel("Username")).toBeFocused();
+  await page.getByLabel("Username").fill("user");
+  await page.getByLabel("Password").fill("wrong");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Sign in", exact: true }).getByRole("alert")).toContainText("Incorrect username or password");
+  await page.getByLabel("Password").fill("password");
+  await page.getByLabel("Password").press("Enter");
+  await expect(page.getByRole("article")).toHaveCount(10);
+  const cookie = (await context.cookies()).find(cookie => cookie.name === "forma_session")!;
+  expect(cookie.httpOnly).toBe(true); expect(cookie.sameSite).toBe("Strict"); expect(cookie.path).toBe("/api");
+  expect(await page.evaluate(() => document.cookie)).not.toContain("forma_session");
+  await page.reload();
+  await expect(page.getByRole("article")).toHaveCount(10);
+  await page.getByRole("button", { name: "Rename Ideas" }).click();
+  await page.getByRole("textbox", { name: "Column name", exact: true }).fill("Unsaved draft");
+  await page.getByRole("textbox", { name: "Column name", exact: true }).press("Enter");
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByLabel("Username")).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(0);
+  expect((await page.request.get("/api/auth/me")).status()).toBe(401);
+  expect((await request.get("/api/auth/me", { headers: { cookie: `forma_session=${cookie.value}` } })).status()).toBe(401);
+  await page.getByLabel("Username").fill("user"); await page.getByLabel("Password").fill("password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Rename Ideas" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Unsaved draft" })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("losing a server session hides the board on returning to the page", async ({ page }) => {
+  expect((await page.request.post("/api/auth/login", { data: { username: "user", password: "password" } })).status()).toBe(200);
+  await page.goto("/");
+  await expect(page.getByRole("article")).toHaveCount(10);
+  expect((await page.request.post("/api/auth/logout")).status()).toBe(204);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByLabel("Username")).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(0);
+});

@@ -1,0 +1,27 @@
+# Only application inputs belong in the build context.
+**
+!Dockerfile
+!backend/
+backend/**
+!backend/pyproject.toml
+!backend/uv.lock
+!backend/app/
+!backend/app/**
+!frontend/
+frontend/**
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/next.config.ts
+!frontend/tsconfig.json
+!frontend/next-env.d.ts
+!frontend/app/
+!frontend/app/**
+!frontend/public/
+!frontend/public/**
+**/.env
+**/.env.*
+**/__pycache__/
+**/*.pyc
+**/*.db
+**/*.db-*
+**/*.sqlite*
