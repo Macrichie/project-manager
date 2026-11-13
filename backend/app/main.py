@@ -1,4 +1,6 @@
 import os
+import sqlite3
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -6,25 +8,56 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.auth import router as auth_router
+from app.boards import router as board_router
+from app.database import (
+    DEFAULT_DATABASE_PATH, BoardConflict, BoardNotFound, Database, StoredBoardError,
+)
 
 FRONTEND_DIST = Path(
     os.environ.get("FRONTEND_DIST", Path(__file__).resolve().parents[2] / "frontend" / "out")
 )
 
 
-def create_app(frontend_dir: Path = FRONTEND_DIST) -> FastAPI:
-    app = FastAPI(title="Forma API")
+def create_app(frontend_dir: Path = FRONTEND_DIST, database_path: Path | None = None) -> FastAPI:
+    database = Database(database_path if database_path is not None else Path(
+        os.environ.get("DATABASE_PATH", DEFAULT_DATABASE_PATH)
+    ))
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        database.initialize()
+        yield
+
+    app = FastAPI(title="Forma API", lifespan=lifespan)
+    app.state.database = database
     app.state.sessions = {}
     app.include_router(auth_router)
+    app.include_router(board_router)
+
+    @app.exception_handler(BoardNotFound)
+    async def missing_board(request: Request, error: BoardNotFound):
+        return JSONResponse({"detail": "Board not found"}, status_code=404)
+
+    @app.exception_handler(BoardConflict)
+    async def stale_board(request: Request, error: BoardConflict):
+        return JSONResponse(
+            {"detail": "Board changed. Reload it before saving again."}, status_code=409
+        )
+
+    @app.exception_handler(sqlite3.Error)
+    @app.exception_handler(StoredBoardError)
+    async def storage_error(request: Request, error: Exception):
+        return JSONResponse({"detail": "Board storage is unavailable"}, status_code=500)
 
     @app.middleware("http")
     async def protect_browser_requests(request: Request, call_next):
         if (request.url.path.startswith("/api/")
             and request.method not in {"GET", "HEAD", "OPTIONS"}
             and request.headers.get("sec-fetch-site") == "cross-site"):
-            return JSONResponse({"detail": "Cross-site requests are not allowed"}, status_code=403)
-        response = await call_next(request)
-        if request.url.path.startswith("/api/auth/"):
+            response = JSONResponse({"detail": "Cross-site requests are not allowed"}, status_code=403)
+        else:
+            response = await call_next(request)
+        if request.url.path.startswith("/api/auth/") or request.url.path.rstrip("/") == "/api/board":
             response.headers["Cache-Control"] = "no-store"
         return response
 

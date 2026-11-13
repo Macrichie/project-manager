@@ -21,7 +21,7 @@
 - [x] Expand this plan with phase checklists, tests, and success criteria.
 - [x] Describe the existing frontend in `frontend/AGENTS.md` while retaining its generated Next.js guidance.
 - [x] Obtain user approval of this detailed plan before starting Part 2 (approved 2026-11-13).
-- [ ] Obtain separate user approval of the proposed database design in Part 5 before implementing Part 6.
+- [x] Obtain separate user approval of the proposed database design in Part 5 before implementing Part 6 (approved by the instruction to proceed to Part 6, 2026-11-13).
 
 Work through the parts in order. Check off implementation and verification separately, with concise results recorded here as work completes. Do not mark planned checks as passed. For defects, identify and demonstrate the root cause before changing code. Keep planning and execution documents in `docs/`.
 
@@ -99,64 +99,64 @@ Success criteria:
 
 ## Part 5: Database modeling and approval
 
-- [ ] Write `docs/DATABASE.md` proposing a small SQLite schema with users and one uniquely owned board per user, storing the board payload as JSON.
-- [ ] Document the JSON shape and example: five stable column IDs, editable column names, ordered card arrays, stable card IDs, title, and details.
-- [ ] Specify validation for fixed columns, unique identifiers, nonblank titles/names, and preserved card details and ordering.
-- [ ] Specify database creation, one-time seed data, transactions, the volume path, and restart behavior. Do not reseed an intentionally empty board.
-- [ ] Specify how authenticated users map to their own board and how future users can be added without implementing registration now.
-- [ ] Propose the minimal board read/write API contract and how stale writes, including AI writes, avoid silently overwriting newer changes.
-- [ ] Explicitly exclude chat messages from the database model.
-- [ ] Present the proposed schema and JSON example for separate user sign-off. Stop before implementing database storage or board routes.
+- [x] Write `docs/DATABASE.md` proposing a small SQLite schema with users and one uniquely owned board per user, storing the board payload as JSON.
+- [x] Document the JSON shape and example in `docs/board.example.json`: five stable column IDs, editable column names, ordered card arrays, stable card IDs, title, and details.
+- [x] Specify validation for fixed columns, unique identifiers, nonblank titles/names, and preserved card details and ordering.
+- [x] Specify database creation, one-time seed data, transactions, the volume path, and restart behavior. Do not reseed an intentionally empty board.
+- [x] Specify how authenticated users map to their own board and how future users can be added without implementing registration now.
+- [x] Propose the minimal board read/write API contract and how stale writes, including AI writes, avoid silently overwriting newer changes.
+- [x] Explicitly exclude chat messages from the database model.
+- [x] Present the proposed schema and JSON example for separate user sign-off (approved 2026-11-13).
 
 Tests and review:
 
-- [ ] Check that the proposed JSON represents all existing dummy cards, renamed columns, empty columns, and arbitrary card order without losing data.
-- [ ] Review the design against one-board ownership, seed-once behavior, persistence, and the session-only chat requirement.
+- [x] Check that the proposed JSON represents all existing dummy cards, renamed columns, empty columns, and arbitrary card order without losing data (exact seed comparison and in-memory round-trip checks passed).
+- [x] Review the design against one-board ownership, seed-once behavior, persistence, and the session-only chat requirement. In-memory SQL checks passed locally and the documented schema was accepted by container SQLite; see `docs/VERIFICATION.md`.
 
 Success criteria:
 
-- [ ] The user approves the documented SQLite and JSON design and API contract before Part 6.
+- [x] The user approves the documented SQLite and JSON design and API contract before Part 6 (2026-11-13).
 
 ## Part 6: Persistent board backend
 
-- [ ] Implement only the approved database model and API contract.
-- [ ] Create the database and tables when absent and seed the MVP user and board once.
-- [ ] Add authenticated routes to read and update the current user's JSON board, supporting all required card operations and column renaming.
-- [ ] Validate incoming board changes and save atomically. Keep ownership and fixed-column rules on the server.
-- [ ] Return useful validation and conflict errors while preserving the last valid saved board on failure.
+- [x] Implement only the approved database model and API contract.
+- [x] Create the database and tables when absent and seed the MVP user and board once.
+- [x] Add authenticated routes to read and update the current user's JSON board, supporting all required card operations and column renaming.
+- [x] Validate incoming board changes and save atomically. Keep ownership and fixed-column rules on the server.
+- [x] Return useful validation and conflict errors while preserving the last valid saved board on failure.
 
 Tests:
 
-- [ ] Use isolated temporary SQLite databases for creation, repeat startup, seed-once behavior, and JSON round-trip tests.
-- [ ] Cover adding, editing, deleting, moving, ordering within columns, renaming, empty boards, and persistence after reopening the database.
-- [ ] Cover invalid payloads, duplicate IDs, changed column identities/count, unauthenticated access, and access isolation using two test users.
-- [ ] Verify failed or stale writes leave saved data intact and successful writes preserve unrelated cards and ordering.
+- [x] Use isolated temporary SQLite databases for creation, repeat startup, seed-once behavior, and JSON round-trip tests.
+- [x] Cover adding, editing, deleting, moving, ordering within columns, renaming, empty boards, and persistence after reopening the database.
+- [x] Cover invalid payloads, duplicate IDs, changed column identities/count, unauthenticated access, and access isolation using two test users.
+- [x] Verify failed or stale writes leave saved data intact and successful writes preserve unrelated cards and ordering.
 
 Success criteria:
 
-- [ ] API tests prove every required board change persists correctly and each user can access only their own board.
+- [x] API tests prove every required board change persists correctly and each user can access only their own board. All 82 backend tests passed; live Docker restart persistence and 16 desktop/mobile auth/deployment checks passed. Server healthy on port 8000; frontend connection remains Part 7. See `docs/VERIFICATION.md`.
 
 ## Part 7: Connect the frontend and backend
 
-Card sorting was brought forward at the user's request after Part 3: the demo now supports ordering within columns and insertion between columns. Persistence and the remaining Part 7 work below are still pending.
+Card sorting was brought forward at the user's request after Part 3. Part 7 now connects all manual operations to SQLite through the authenticated board API.
 
-- [ ] Load the board from the API after authentication; remove unconditional client-side demo initialization and refresh-reset messaging.
-- [ ] Persist add, edit, delete, rename, move, and reorder actions through the approved API. Provide a simple card edit form for title and details.
+- [x] Load the board from the API after authentication; remove unconditional client-side demo initialization and refresh-reset messaging.
+- [x] Persist add, edit, delete, rename, move, and reorder actions through the approved API. Provide a simple card edit form for title and details.
 - [x] Extend existing dnd-kit behavior to place cards at the chosen position within or between columns, including empty columns (brought forward after Part 3 at the user's request).
-- [ ] Preserve pointer, touch, keyboard, cancel, and focus behavior. Update card counts and completion display from the saved board.
-- [ ] Add concise loading and save-error feedback; keep the UI consistent with server state after failures and avoid overlapping writes.
+- [x] Preserve pointer, touch, keyboard, cancel, and focus behavior. Update card counts and completion display from the saved board.
+- [x] Add concise loading and save-error feedback; keep the UI consistent with server state after failures and avoid overlapping writes.
 
 Tests:
 
-- [ ] Extend board unit tests for moving up/down, first/last positions, cross-column insertion, empty targets, cancellation, and unchanged moves.
-- [ ] Extend component tests for editing, API loading/saving, validation, failure recovery, and authentication loss.
-- [ ] Run Playwright against the container for the full CRUD/rename/drag workflow, checking exact card order after refresh and logout/login.
-- [ ] Verify pointer and keyboard reordering on desktop and touch dragging on mobile; check overflow, long content, empty columns, and focus.
-- [ ] Restart the container and verify saved titles, details, column names, and ordering remain; confirm deleted seed cards do not return.
+- [x] Retain the 13 existing board move cases for up/down, first/last positions, cross-column insertion, empty targets, and unchanged moves; verify cancellation in browser workflows. No duplicate unit cases were added for already-covered pure moves.
+- [x] Extend component tests for editing, API loading/saving, validation, failure recovery, and authentication loss (32 frontend tests passed).
+- [x] Run Playwright against the container for the full CRUD/rename/drag workflow, checking exact card order after refresh and logout/login.
+- [x] Verify pointer and keyboard reordering on desktop and touch dragging on mobile; check overflow, long content, empty columns, and focus (18 applicable desktop/mobile checks passed; 6 device-specific skips).
+- [x] Restart the container and verify saved titles, details, column names, and ordering remain; confirm deleted seed cards do not return (explicit isolated-container restart browser test passed).
 
 Success criteria:
 
-- [ ] All manual board operations work and persist, including ordering within a column; the polished layout remains usable on desktop and mobile.
+- [x] All manual board operations work and persist, including ordering within a column; the polished layout remains usable on desktop and mobile. Production build, lint, typecheck, 32 frontend tests, 18 board/auth browser checks, 1 explicit restart check, and 12 deployment checks passed. Main container running healthy on port 8000; see `docs/VERIFICATION.md`.
 
 ## Part 8: OpenRouter connectivity
 

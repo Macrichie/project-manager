@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import Home from "../app/page";
+import { boardApi } from "./board-api";
 
 const session = { user: { id: 1, username: "user" }, expires_in: 28800 };
 const sessionResponse = () => Response.json(session);
@@ -10,7 +11,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it("keeps the board hidden while checking and restores a valid session", async () => {
   let resolve!: (response: Response) => void;
-  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(done => { resolve = done; })));
+  vi.stubGlobal("fetch", boardApi(vi.fn(() => new Promise<Response>(done => { resolve = done; }))).fetch);
   render(<Home />);
   expect(screen.queryByRole("article")).not.toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("Opening your workspace");
@@ -23,7 +24,7 @@ it("shows invalid credentials, signs in with the server response, and signs out"
   const fetchMock = vi.fn().mockResolvedValueOnce(signedOutResponse())
     .mockResolvedValueOnce(Response.json({ detail: "Incorrect username or password" }, { status: 401 }))
     .mockResolvedValueOnce(sessionResponse()).mockResolvedValueOnce(new Response(null, { status: 204 }));
-  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("fetch", boardApi(fetchMock).fetch);
   render(<Home />);
   await user.type(await screen.findByLabelText("Username"), "user");
   await user.type(screen.getByLabelText("Password"), "wrong");
@@ -41,7 +42,7 @@ it("shows invalid credentials, signs in with the server response, and signs out"
 it("offers retry when the initial session check fails and handles login network errors", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(signedOutResponse()).mockRejectedValueOnce(new Error("offline"));
-  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("fetch", boardApi(fetchMock).fetch);
   render(<Home />);
   await user.click(await screen.findByRole("button", { name: "Try again" }));
   await user.type(await screen.findByLabelText("Username"), "user");
@@ -53,7 +54,7 @@ it("offers retry when the initial session check fails and handles login network 
 it("discards board state when the server reports a lost session on focus", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn().mockResolvedValueOnce(sessionResponse());
-  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("fetch", boardApi(fetchMock).fetch);
   render(<Home />);
   await user.click(await screen.findByRole("button", { name: "Rename Ideas" }));
   await user.clear(screen.getByLabelText("Column name"));
@@ -65,13 +66,12 @@ it("discards board state when the server reports a lost session on focus", async
   fetchMock.mockResolvedValueOnce(sessionResponse());
   await user.type(screen.getByLabelText("Username"), "user"); await user.type(screen.getByLabelText("Password"), "password");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
-  expect(await screen.findByRole("button", { name: "Rename Ideas" })).toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: "Changed" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Rename Changed" })).toBeInTheDocument();
 });
 
 it("keeps the current board available when logout fails", async () => {
   const user = userEvent.setup();
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(sessionResponse()).mockRejectedValueOnce(new Error("offline")));
+  vi.stubGlobal("fetch", boardApi(vi.fn().mockResolvedValueOnce(sessionResponse()).mockRejectedValueOnce(new Error("offline"))).fetch);
   render(<Home />);
   await user.click(await screen.findByRole("button", { name: "Sign out" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not sign out");
@@ -80,7 +80,7 @@ it("keeps the current board available when logout fails", async () => {
 
 it("removes the board when its session expires", async () => {
   vi.useFakeTimers();
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(sessionResponse()));
+  vi.stubGlobal("fetch", boardApi(vi.fn().mockResolvedValueOnce(sessionResponse())).fetch);
   await act(async () => { render(<Home />); });
   expect(screen.getAllByRole("article")).toHaveLength(10);
   await act(async () => { await vi.advanceTimersByTimeAsync(28800001); });

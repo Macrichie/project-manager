@@ -1,5 +1,80 @@
 # Verification
 
+## 2026-11-13: Part 7, frontend persistence and card editing
+
+All Part 7 criteria are complete. The frontend now reads the authenticated user's saved board and persists add, edit, delete, rename, move, and reorder operations. The main app is running healthy at http://127.0.0.1:8000 with its existing data volume preserved. AI remains in Parts 8-10.
+
+Implementation:
+
+- Added `app/use-board.ts` for loading and full-document saves using the current revision. The UI applies the returned saved document; it never initializes from dummy data. Only one save can run at a time, with loading/saving feedback and paused write controls. Saved board state drives counts and completion.
+- Added an inline card editor sharing the add-card form. Titles are trimmed and must be nonblank; details preserve whitespace, Unicode, and newlines. Successful saves close forms and restore focus; Escape/cancel makes no write. Existing dnd-kit pointer/touch/keyboard targeting and cancellation are retained.
+- Conflicts reload the authoritative board without resubmitting the stale document. Open form text remains for review and a deliberate retry. Other failed saves also refetch because a lost response can follow a committed write. Failed recovery blocks further changes until reload succeeds. Board API 401 returns to sign-in; unmount aborts pending requests.
+- Stabilized the authentication-loss callback so routine session rechecks do not reload the board or discard drafts. Removed refresh-reset messaging and updated README/frontend guidance.
+
+| Check | Result |
+| --- | --- |
+| `npm test` | 32 passed across 3 files: retained move/auth/component coverage plus 9 new cases covering board loading/retry, editing/validation, pending-save serialization, conflict/draft recovery, ambiguous network outcomes, blocked recovery/reload, and board API authentication loss. |
+| `npm run lint` / `npm run typecheck` | Passed. |
+| Production Docker build | Passed static export and TypeScript build. No new dependency or Next.js runtime introduced. |
+| Board/auth Playwright | 18 passed on desktop/mobile against an isolated container on port 8001; 6 intentional input/device skips. Covered exact order after refresh, logout/login persistence, edit details, rename, deletion of a seed card, empty boards/completion, real two-tab 409 recovery, pointer and keyboard moves/cancel/focus, and mobile touch moves/reordering. |
+| Explicit restart Playwright | `PLAYWRIGHT_RESTART_CONTAINER=forma-part7-test`, `PLAYWRIGHT_BASE_URL=http://127.0.0.1:8001`, `npx playwright test e2e/restart.spec.ts --project desktop`: 1 passed. Browser-edited title/multiline details, renamed column, deleted seed card, and exact reordered card sequence survived restart unchanged; the old session required sign-in again. |
+| Deployed main container | Recreated using the built image and the existing volume; Compose reported healthy. All 12 deployment browser checks passed on port 8000, including assets without browser errors, API docs, health/hello aliases, and JSON/static 404 boundaries. |
+| Visual review | Reviewed desktop/mobile board captures and the inline desktop editor. Existing layout/colors remain intact, with no page overflow in the browser checks; mobile edit/delete controls are visible. |
+
+Initial verification findings and fixes:
+
+- Lint identified synchronous pending-state updates from the mount effect. Initial loading now uses its existing initial state; only the explicit reload action resets pending/error before fetching. No lint suppression was added.
+- A Playwright fixture callback named `use` triggered the React Hook rule; renamed the callback to describe running the test.
+- The first full browser run had four failures, all in two new workflows on both devices: a prefilled textarea did not match the exact label-text selector, and a partial column-label selector also matched the Save button. Traces/snapshots showed valid controls and successful preceding saves. Replaced those selectors with exact textbox-role/name queries, scoped the conflict alert to the main content, and reran the full board/auth suite successfully.
+- An initial standalone restart smoke attempt sent keyboard movement without waiting for drag activation/target confirmation and stopped before restart on an order assertion. The durable restart test now uses the same activation/target waits as the passing keyboard regressions; it passed without an application drag change.
+
+Integration runs used a separate `forma-part7-test` container and `forma_part7_test_data` volume. Serial board/auth fixtures install the seed temporarily and restore prior board content; the normal app's board was not reset for these tests. The temporary container/volume were removed afterward. The restart scenario is explicitly opt-in so ordinary browser runs do not restart the user's app.
+
+Testing followed the practical approximately 80% policy: reused existing move tests, targeted new behavior and data boundaries, and added no percentage-driven coverage infrastructure. Backend application code was unchanged in this phase; the previously passing 82-test backend suite is recorded under Part 6. Installed Next.js `use-client` guidance was reviewed before implementation.
+
+## 2026-11-13: Part 6, persistent board backend
+
+The user approved the Part 5 design by instructing us to proceed to Part 6. All Part 6 criteria are complete. The backend stores boards in SQLite; frontend persistence remains Part 7, so current UI edits still reset.
+
+Implementation:
+
+- Added strict board models, the packaged approved seed, SQLite storage, and authenticated GET/PUT `/api/board` (including slash aliases). Fixed columns, board-wide unique card IDs, required text/types, and unknown-field rejection are enforced on the server. Valid text and array order are preserved without trimming or arbitrary length caps.
+- Startup creates the database/tables and seeds the user and board only when absent. Login reads the actual database user ID. Connections enable foreign keys, commit or roll back, and close explicitly. Sessions remain in memory; no chat data is stored.
+- Whole-board saves atomically compare/increment the revision for the authenticated owner. Missing boards return 404, stale writes 409, validation failures 422, and storage/corrupt-data failures a concise 500. Private responses, including these errors and cross-site rejections, use `Cache-Control: no-store`.
+
+| Check | Result |
+| --- | --- |
+| `cd backend; uv run --locked pytest -W error` | 82 passed: 55 existing tests plus 27 new board/storage cases. No warnings. |
+| Board round-trip | Exact seed equality, add/edit/delete, rename, within-column reorder, cross-column insertion, unrelated card preservation, long titles, Unicode/newlines, empty details, logout/login, and database reopening passed. |
+| Seed lifecycle | Nested directory/file creation and repeat initialization passed. An intentionally empty board survived a fresh app instance without reseeding; the old session was rejected. Invalid stored data remained unchanged and returned a safe error. |
+| Ownership/validation | Two independently authenticated test owners remained isolated. Wrong/extra fields, invalid revisions/types, blank text, duplicate IDs, changed/reordered/missing/extra columns, and absent/forged sessions were rejected without changing saved data. Existing database user ID 42 was resolved correctly at login. |
+| Atomicity/conflicts | Two concurrent writers on separate SQLite connections produced exactly one success and one conflict. Stale/cross-site writes and a failing SQL update trigger preserved the last committed board. Missing rows were not recreated by reads/writes. |
+| Docker build/start | Static frontend and TypeScript build passed. Recreated the container successfully; Compose reported healthy. |
+| Live restart persistence | Saved a renamed/reordered board through HTTP, checked exact read-back and stale-write rejection, restarted the container, verified the old session returned 401, signed in again, and confirmed the saved document/revision remained unchanged. Restored original board content using a revision check. |
+| Auth browser regressions | All 4 desktop/mobile checks passed against the container: login, refresh, logout/revocation, and authentication loss. |
+| Deployment browser checks | All 12 passed: board/assets without browser errors, health/hello aliases, API documentation, and JSON API/static 404 boundaries. |
+| Runtime layout | `/data/kanban.db` exists in the existing mounted volume; the packaged seed is present. Only `users` and `boards` tables exist. No root `.env`, docs directory, or database under the public static directory. |
+
+The initial backend run identified two fixture defects: the new temporary database shared the test static root, causing the existing private-file check to expose it, and one setup connection was not explicitly closed. Separated static/data fixture directories to match deployment and closed the setup connection; all 82 tests then passed with warnings treated as errors. No production static-serving workaround was needed.
+
+Updated the plan, database approval status, backend guidance, and minimal README. Followed the practical testing policy: focused on storage and authentication boundaries, retained existing tests, and added no coverage instrumentation solely for a percentage. Frontend source is unchanged. The container remains healthy at http://127.0.0.1:8000.
+
+Implementation references: [Python SQLite connections and transactions](https://docs.python.org/3.14/library/sqlite3.html), [Pydantic strict mode](https://docs.pydantic.dev/latest/concepts/strict_mode/), [Pydantic validators](https://docs.pydantic.dev/latest/concepts/validators/), and [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/).
+
+## 2026-11-13: Part 5, database proposal
+
+The design in `docs/DATABASE.md` and full seed in `docs/board.example.json` are ready for separate user sign-off. Approval remains unchecked in the plan; no application database, storage module, board endpoint, or frontend integration has been implemented.
+
+- Compared the JSON example directly against the imported `initialBoard` from `frontend/app/board.ts`: all five columns and ten cards match exactly.
+- Executed the schema copied from the document in an in-memory SQLite database. Verified foreign keys, one-board-per-user uniqueness, valid-JSON and positive-revision checks, and STRICT column types.
+- Exercised initialization twice; existing rows were preserved. Saved an intentionally empty board and initialized again; it remained empty at the same revision.
+- Round-tripped the full seed and a renamed/reordered board with a cross-column move and Unicode/multiline details without losing content or array order.
+- Created a second test owner and confirmed an update to the first owner left the second board unchanged. Two writes using the same revision produced one successful update and one zero-row stale rejection. A simulated transaction failure rolled back to the last committed board.
+- Parsed and checked the complete JSON API example in the document, including the fixed column identities and a renamed, empty board.
+- The documented schema also executed successfully in a separate `:memory:` connection inside the existing Docker container. Local SQLite is 3.50.4; container SQLite is 3.46.1. These checks created no persistent database file and did not change the running application.
+
+This was documentation/design validation only. Application suites and coverage instrumentation were not rerun or expanded for documentation changes, following the practical testing policy. File changes are confined to the plan, verification log, database proposal, and JSON example.
+
 ## 2026-11-13: Part 4, MVP sign-in
 
 Part 4 is complete. The local app at http://127.0.0.1:8000 now requires sign-in using `user` / `password`. Database design and persistence remain in later phases.

@@ -9,6 +9,7 @@ type Session = { user: User; expires_in: number };
 export function AuthGate({ children }: { children: (user: User, onSignedOut: () => void) => ReactNode }) {
   const [session, setSession] = useState<Session | null>();
   const [error, setError] = useState("");
+  const signedOut = useCallback(() => setSession(null), []);
   const checkSession = useCallback((signal?: AbortSignal) => {
     return fetch("/api/auth/me", { cache: "no-store", signal }).then(async response => {
       let next: Session | null;
@@ -38,7 +39,7 @@ export function AuthGate({ children }: { children: (user: User, onSignedOut: () 
     return () => { controller.abort(); window.clearTimeout(timer); window.removeEventListener("focus", onFocus); };
   }, [session, checkSession]);
 
-  if (session) return children(session.user, () => setSession(null));
+  if (session) return children(session.user, signedOut);
   return <div className="auth-shell">
     <section className="auth-welcome" aria-label="Welcome to Forma">
       <div className="brand"><span className="brand-icon"><Layers3 size={21} /></span>forma<span className="brand-period">.</span></div>

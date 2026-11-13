@@ -48,10 +48,13 @@ def session_info(session: Session) -> SessionInfo:
 def login(credentials: Credentials, request: Request, response: Response) -> SessionInfo:
     if credentials.username != "user" or credentials.password != "password":
         raise HTTPException(status_code=401, detail="Incorrect username or password")
+    user = request.app.state.database.get_user("user")
+    if user is None:
+        raise HTTPException(status_code=500, detail="Sign-in data is unavailable")
     sessions: dict[str, Session] = request.app.state.sessions
     sessions.pop(request.cookies.get(COOKIE_NAME, ""), None)
     token = token_urlsafe(32)
-    session = Session(user=User(id=1, username="user"), expires_at=monotonic() + SESSION_SECONDS)
+    session = Session(user=User.model_validate(user), expires_at=monotonic() + SESSION_SECONDS)
     sessions[token] = session
     response.set_cookie(
         COOKIE_NAME, token, max_age=SESSION_SECONDS, path="/api",

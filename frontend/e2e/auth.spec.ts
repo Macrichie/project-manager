@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
-test("sign-in validation, session refresh, logout, and fresh board state", async ({ page, context, request }, testInfo) => {
+test("sign-in validation, session refresh, logout, and saved board state", async ({ page, context, request }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.goto("/");
@@ -27,6 +27,7 @@ test("sign-in validation, session refresh, logout, and fresh board state", async
   await page.getByRole("button", { name: "Rename Ideas" }).click();
   await page.getByRole("textbox", { name: "Column name", exact: true }).fill("Unsaved draft");
   await page.getByRole("textbox", { name: "Column name", exact: true }).press("Enter");
+  await expect(page.getByRole("button", { name: "Rename Unsaved draft", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("Username")).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(0);
@@ -34,8 +35,8 @@ test("sign-in validation, session refresh, logout, and fresh board state", async
   expect((await request.get("/api/auth/me", { headers: { cookie: `forma_session=${cookie.value}` } })).status()).toBe(401);
   await page.getByLabel("Username").fill("user"); await page.getByLabel("Password").fill("password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Rename Ideas" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Unsaved draft" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Rename Unsaved draft" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Unsaved draft" })).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 
