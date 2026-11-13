@@ -1,6 +1,6 @@
 # Database design
 
-Status: approved by the user's instruction to proceed to Part 6 on 2026-11-13. Part 6 implements storage and board routes; Part 7 connects the frontend to them.
+Status: approved by the user's instruction to proceed to Part 6 on 2026-11-13. Storage, manual frontend persistence, and structured AI writes are implemented through Part 9. The schema remains unchanged.
 
 ## Storage
 
@@ -114,7 +114,9 @@ One affected row means success; commit and return that saved document with the i
 
 For example, two tabs load revision 3. The first write succeeds at revision 4; the second write expecting 3 affects zero rows and returns 409. The first write is preserved. Serialize saves within one page to avoid unnecessary local conflicts; the revision check also protects against other tabs and AI requests.
 
-In Part 9, load the authoritative board and revision before calling the AI. Release the connection/transaction while awaiting the network. Validate an optional updated board through the same model and perform the same conditional update against that original revision. If work changed meanwhile, reject the AI update with 409, refetch, and do not present an uncommitted change as successful. Persist a valid update before returning the saved board/revision with the assistant reply. Reply-only output does not write or increment a revision. The chat request/response contract itself belongs to Part 9.
+Part 9 loads the authoritative board and revision before calling the AI, with the read connection closed during the network request. It validates an optional updated board through the same model and performs the conditional update against that original revision. If work changed meanwhile, reject the AI update with 409; the client must refetch rather than present the uncommitted change as successful. Persist a valid update before returning saved board/revision with the assistant reply. Reply-only output rereads saved state without writing or incrementing a revision.
+
+Authenticated POST `/api/chat` accepts `{message, history?}` and returns `{reply, updated, revision, board}`. History allows user/assistant text only and remains request-local. The model returns a nullable complete board using strict JSON Schema; the public API always returns authoritative saved board state. Chat/history is never added to these tables or server sessions. See [PLAN.md](PLAN.md) for the implemented contract and [VERIFICATION.md](VERIFICATION.md) for local/live checks.
 
 Use short-lived SQLite connections and explicit commit/rollback/close handling. The default journal mode is sufficient for this single-container MVP; no connection pool, background writer, WAL requirement, merge engine, or real-time synchronization is proposed. Existing incompatible/corrupt data must surface an error rather than being deleted or silently reseeded. [Python sqlite3](https://docs.python.org/3.14/library/sqlite3.html).
 

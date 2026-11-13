@@ -26,6 +26,16 @@ test("browser changes survive container restart", async ({ page }, testInfo) => 
   await page.keyboard.press("Space");
   const backlog = page.getByRole("region", { name: "Restart backlog", exact: true });
   await expect(backlog.getByRole("heading", { level: 3 })).toHaveText(["Small details, big difference", "Restart saved title"]);
+  const withAI = process.env.PLAYWRIGHT_LIVE_AI === "1";
+  if (withAI) {
+    await page.getByRole("button", { name: "AI assistant", exact: true }).click();
+    await page.getByLabel("Message your assistant").fill("Create a card titled 'Restart AI task' at the end of To do with details 'Saved by the assistant'. Make no other changes.");
+    const reply = page.waitForResponse(response => response.url().endsWith("/api/chat") && response.request().method() === "POST");
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    expect((await reply).status()).toBe(200);
+    await expect(page.getByRole("heading", { name: "Restart AI task", exact: true })).toBeVisible();
+    await expect(page.getByRole("log").locator(".chat-message")).toHaveCount(2);
+  }
   const saved = await (await page.request.get("/api/board")).json();
 
   execFileSync("docker", ["restart", process.env.PLAYWRIGHT_RESTART_CONTAINER!]);
@@ -41,4 +51,10 @@ test("browser changes survive container restart", async ({ page }, testInfo) => 
   await expect(page.getByText("Multiline details\nPreserved across restart", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Give empty states a voice", exact: true })).toHaveCount(0);
   expect(await (await page.request.get("/api/board")).json()).toEqual(saved);
+  if (withAI) {
+    await expect(page.getByRole("heading", { name: "Restart AI task", exact: true })).toBeVisible();
+    await expect(page.getByText("Saved by the assistant", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "AI assistant", exact: true }).click();
+    await expect(page.getByRole("log").locator(".chat-message")).toHaveCount(0);
+  }
 });

@@ -4,10 +4,11 @@ import Link from "next/link";
 import { closestCenter, closestCorners, DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDndContext, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Check, Columns3, GripVertical, Layers3, Plus, Trash2, X, Pencil, ArrowUpRight } from "lucide-react";
+import { Check, Columns3, GripVertical, Layers3, Plus, Trash2, X, Pencil, ArrowUpRight, Sparkles } from "lucide-react";
 import { moveCard, type Card, type Column } from "./board";
 import { AccountMenu, type User } from "./auth";
 import { useBoard } from "./use-board";
+import { ChatPanel } from "./chat-panel";
 
 const boardCollisions: CollisionDetection = args => {
   if (!args.pointerCoordinates) return closestCorners(args);
@@ -82,9 +83,12 @@ function BoardColumn({ column, index, busy, onRename, onAdd, onEdit, onDelete }:
   </section>;
 }
 export function ProjectBoard({ user, onSignedOut }: { user: User; onSignedOut: () => void }) {
-  const { board: savedBoard, save, reload, pending, blocked, error } = useBoard(onSignedOut);
+  const { board: savedBoard, save, reload, pending, blocked, error, chat } = useBoard(onSignedOut);
   const board = savedBoard ?? [];
   const [active, setActive] = useState<Card | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatToggle = useRef<HTMLButtonElement>(null);
+  function closeChat() { setChatOpen(false); requestAnimationFrame(() => chatToggle.current?.focus()); }
   // Follow board order rather than the rotated overlay's geometry.
   const keyboardCoordinates: KeyboardCoordinateGetter = (event, { context }) => {
     if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) return;
@@ -119,8 +123,8 @@ export function ProjectBoard({ user, onSignedOut }: { user: User; onSignedOut: (
   const done = board[4]?.cards.length ?? 0;
   return <><header className="app-header"><Link className="brand" href="/" aria-label="Forma home"><span className="brand-icon"><Layers3 size={21} /></span>forma<span className="brand-period">.</span></Link><div className="header-divider" /><span className="workspace-label">Your workspace</span><AccountMenu user={user} onSignedOut={onSignedOut} /></header>
     <main><div className="breadcrumb">Workspace <span>/</span> <span>Project board</span></div><section className="board-intro"><div><div className="eyebrow"><span /> A LITTLE STRUCTURE. A LOT OF POSSIBILITIES.</div><h1>Great work starts here<span>.</span></h1><p>A clear space for your ideas, your progress, and your next big thing.</p></div><div className="board-symbol" aria-hidden="true"><Columns3 size={30} /><ArrowUpRight size={18} /></div></section>
-    <div className="board-toolbar"><div className="board-tab"><Columns3 size={17} /> Project board</div><div className="board-summary"><span>{total} cards</span><span className="summary-divider" /><span className="completion"><span style={{ width: `${total ? done / total * 100 : 0}%` }} /></span><span>{done} of {total} complete</span></div></div>
+    <div className="board-toolbar"><div className="board-tab"><Columns3 size={17} /> Project board</div><div className="board-summary"><span>{total} cards</span><span className="summary-divider" /><span className="completion"><span style={{ width: `${total ? done / total * 100 : 0}%` }} /></span><span>{done} of {total} complete</span></div><button ref={chatToggle} className={`chat-toggle ${chatOpen ? "selected" : ""}`} aria-label="AI assistant" aria-expanded={chatOpen} aria-controls="board-assistant" onClick={() => chatOpen ? closeChat() : setChatOpen(true)}><Sparkles size={16} /><span>AI assistant</span></button></div>
     {error && <div className="board-error" role="alert"><span>{error}</span>{blocked && <button className="text-button" disabled={pending} onClick={() => void reload()}>Reload board</button>}</div>}
-    {!savedBoard ? <div className="board-loading" role="status">{pending ? "Loading your board..." : "Your saved board is unavailable."}</div> : <DndContext id="kanban" sensors={sensors} collisionDetection={boardCollisions} onDragStart={event => setActive(board.flatMap(column => column.cards).find(card => card.id === event.active.id) ?? null)} onDragEnd={finishDrag} onDragCancel={() => setActive(null)}><div className="board-scroll"><div className="board">{board.map((column, index) => <BoardColumn key={column.id} column={column} index={index} busy={pending || blocked} onRename={name => save(board.map(item => item.id === column.id ? { ...item, name } : item))} onAdd={(title, details) => save(board.map(item => item.id === column.id ? { ...item, cards: [...item.cards, { id: crypto.randomUUID(), title, details }] } : item))} onEdit={(id, title, details) => save(board.map(item => ({ ...item, cards: item.cards.map(card => card.id === id ? { ...card, title, details } : card) })))} onDelete={id => { void save(board.map(item => ({ ...item, cards: item.cards.filter(card => card.id !== id) }))); }} />)}</div></div><DragOverlay>{active ? <TaskCard card={active} overlay /> : null}</DragOverlay></DndContext>}
-    <footer><span><GripVertical size={14} /> Grab a card and make your next move.</span><span aria-live="polite">{pending ? (savedBoard ? "Saving changes..." : "Opening your board...") : error ? "Please review the message above." : "All changes saved"}</span></footer></main></>;
+    <div className={`workspace ${chatOpen ? "chat-open" : ""}`}><div className="board-area">{!savedBoard ? <div className="board-loading" role="status">{pending ? "Loading your board..." : "Your saved board is unavailable."}</div> : <DndContext id="kanban" sensors={sensors} collisionDetection={boardCollisions} onDragStart={event => setActive(board.flatMap(column => column.cards).find(card => card.id === event.active.id) ?? null)} onDragEnd={finishDrag} onDragCancel={() => setActive(null)}><div className="board-scroll"><div className="board">{board.map((column, index) => <BoardColumn key={column.id} column={column} index={index} busy={pending || blocked} onRename={name => save(board.map(item => item.id === column.id ? { ...item, name } : item))} onAdd={(title, details) => save(board.map(item => item.id === column.id ? { ...item, cards: [...item.cards, { id: crypto.randomUUID(), title, details }] } : item))} onEdit={(id, title, details) => save(board.map(item => ({ ...item, cards: item.cards.map(card => card.id === id ? { ...card, title, details } : card) })))} onDelete={id => { void save(board.map(item => ({ ...item, cards: item.cards.filter(card => card.id !== id) }))); }} />)}</div></div><DragOverlay>{active ? <TaskCard card={active} overlay /> : null}</DragOverlay></DndContext>}</div><ChatPanel open={chatOpen} onClose={closeChat} busy={pending || blocked || Boolean(active)} messages={chat.messages} pendingMessage={chat.pendingMessage} error={chat.error} onSend={chat.send} /></div>
+    <footer><span><GripVertical size={14} /> Grab a card and make your next move.</span><span aria-live="polite">{pending ? (chat.pendingMessage ? "Working with your assistant..." : savedBoard ? "Saving changes..." : "Opening your board...") : error ? "Please review the message above." : "All changes saved"}</span></footer></main></>;
 }

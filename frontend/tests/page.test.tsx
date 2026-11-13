@@ -182,3 +182,40 @@ it.each(["load", "save"])("reports authentication loss during board %s", async p
   }
   await waitFor(() => expect(signedOut).toHaveBeenCalledOnce());
 });
+
+it("keeps chat paused during a manual save and restores toggle focus on close", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  await screen.findByRole("button", { name: "Rename Ideas" });
+  await user.click(screen.getByRole("button", { name: "AI assistant" }));
+  await user.type(screen.getByLabelText("Message your assistant"), "My next request");
+  await user.click(screen.getByRole("button", { name: "Rename Ideas" }));
+  let finish!: (response: Response) => void;
+  server.fetch.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  fireEvent.submit(screen.getByLabelText("Column name").closest("form")!);
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await act(async () => finish(Response.json({ ...server.read(), revision: 2 })));
+  await user.click(screen.getByRole("button", { name: "Close assistant" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "AI assistant" })).toHaveFocus());
+  await user.click(screen.getByRole("button", { name: "AI assistant" }));
+  expect(screen.getByLabelText("Message your assistant")).toHaveValue("My next request");
+});
+
+it("serializes pending chat with manual writes and recovers a failed transport without a model reply", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  await screen.findByRole("button", { name: "Rename Ideas" });
+  await user.click(screen.getByRole("button", { name: "AI assistant" }));
+  await user.type(screen.getByLabelText("Message your assistant"), "Keep this request");
+  let fail!: (error: Error) => void;
+  server.fetch.mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => { fail = reject; }));
+  fireEvent.submit(screen.getByLabelText("Message your assistant").closest("form")!);
+  expect(screen.getByRole("button", { name: "Delete A warmer welcome" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  fireEvent.submit(screen.getByLabelText("Message your assistant").closest("form")!);
+  expect(server.fetch.mock.calls.filter(([url]) => url === "/api/chat")).toHaveLength(1);
+  await act(async () => fail(new TypeError("Failed to fetch")));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't confirm");
+  expect(screen.getByLabelText("Message your assistant")).toHaveValue("Keep this request");
+  expect(screen.getByRole("button", { name: "Delete A warmer welcome" })).toBeEnabled();
+  expect(screen.getByRole("log")).not.toHaveTextContent("Keep this request");
+  expect(screen.getAllByRole("article")).toHaveLength(10);
+});

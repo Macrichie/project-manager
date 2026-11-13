@@ -1,6 +1,20 @@
 import pytest
 
 
+@pytest.mark.parametrize(("path", "method", "allowed"), [
+    ("/api/chat", "GET", {"POST"}),
+    ("/api/chat/", "GET", {"POST"}),
+    ("/api/chat", "PUT", {"POST"}),
+    ("/api/board", "POST", {"GET", "PUT"}),
+    ("/api/auth/login", "GET", {"POST"}),
+])
+def test_known_api_path_with_wrong_method_returns_405(client, path, method, allowed):
+    response = client.request(method, path)
+    assert response.status_code == 405
+    assert response.json() == {"detail": "Method Not Allowed"}
+    assert set(response.headers["allow"].split(", ")) == allowed
+
+
 @pytest.mark.parametrize("path", ["/api/health", "/health", "/api/health/", "/health/"])
 def test_health_returns_json(client, path):
     response = client.get(path)

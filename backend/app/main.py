@@ -5,10 +5,13 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Match
 
 from app.auth import router as auth_router
 from app.boards import router as board_router
+from app.chat import router as chat_router
 from app.database import (
     DEFAULT_DATABASE_PATH, BoardConflict, BoardNotFound, Database, StoredBoardError,
 )
@@ -31,8 +34,9 @@ def create_app(frontend_dir: Path = FRONTEND_DIST, database_path: Path | None = 
     app = FastAPI(title="Forma API", lifespan=lifespan)
     app.state.database = database
     app.state.sessions = {}
-    app.include_router(auth_router)
-    app.include_router(board_router)
+    api_routers = (auth_router, board_router, chat_router)
+    for router in api_routers:
+        app.include_router(router)
 
     @app.exception_handler(BoardNotFound)
     async def missing_board(request: Request, error: BoardNotFound):
@@ -57,7 +61,7 @@ def create_app(frontend_dir: Path = FRONTEND_DIST, database_path: Path | None = 
             response = JSONResponse({"detail": "Cross-site requests are not allowed"}, status_code=403)
         else:
             response = await call_next(request)
-        if request.url.path.startswith("/api/auth/") or request.url.path.rstrip("/") == "/api/board":
+        if request.url.path.startswith("/api/auth/") or request.url.path.rstrip("/") in {"/api/board", "/api/chat"}:
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -79,7 +83,17 @@ def create_app(frontend_dir: Path = FRONTEND_DIST, database_path: Path | None = 
 
     @app.api_route("/api", methods=api_methods, include_in_schema=False)
     @app.api_route("/api/{path:path}", methods=api_methods, include_in_schema=False)
-    def unknown_api() -> None:
+    def unknown_api(request: Request) -> None:
+        allowed = set()
+        for router in (app.router, *api_routers):
+            for route in router.routes:
+                if isinstance(route, APIRoute) and route.matches(request.scope)[0] == Match.PARTIAL:
+                    allowed.update(route.methods)
+        if allowed:
+            raise HTTPException(
+                status_code=405, detail="Method Not Allowed",
+                headers={"Allow": ", ".join(sorted(allowed))},
+            )
         raise HTTPException(status_code=404, detail="Not Found")
 
     app.mount("/", StaticFiles(directory=frontend_dir, html=True, check_dir=False), name="frontend")

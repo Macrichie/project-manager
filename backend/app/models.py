@@ -3,7 +3,8 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 COLUMN_IDS = ["ideas", "todo", "progress", "review", "done"]
-NonBlank = Annotated[str, StringConstraints(pattern=r"\S")]
+# Whole-string form also works with provider decoders that anchor JSON Schema patterns.
+NonBlank = Annotated[str, StringConstraints(pattern=r"^[\s\S]*\S[\s\S]*$")]
 
 
 class BoardModel(BaseModel):
