@@ -11,16 +11,19 @@ class BoardModel(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
 
+MAX_CARDS_PER_COLUMN = 100
+
+
 class Card(BoardModel):
-    id: NonBlank
-    title: NonBlank
-    details: str
+    id: Annotated[NonBlank, Field(max_length=100)]
+    title: Annotated[NonBlank, Field(max_length=5000)]
+    details: Annotated[str, Field(max_length=50000)]
 
 
 class Column(BoardModel):
     id: str
-    name: NonBlank
-    cards: list[Card]
+    name: Annotated[NonBlank, Field(max_length=200)]
+    cards: Annotated[list[Card], Field(max_length=MAX_CARDS_PER_COLUMN)]
 
 
 class Board(BoardModel):

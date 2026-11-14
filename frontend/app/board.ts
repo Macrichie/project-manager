@@ -17,6 +17,12 @@ export const initialBoard: Column[] = [
     { id: "c9", title: "Start with a clear purpose", details: "One board. Less noise. More room to do your best work." },
     { id: "c10", title: "Lay the foundation", details: "The project is set up and ready for something great." }] },
 ];
+/**
+ * Move a card to a target column at a given position. For intra-column moves,
+ * `targetIndex` is the position in the array *after* the card has been removed
+ * (matching @dnd-kit's hovered-card index). For inter-column moves, it is the
+ * direct insertion index in the target column's array.
+ */
 export function moveCard(board: Column[], cardId: string, targetId: string, targetIndex?: number): Column[] {
   const source = board.find(column => column.cards.some(card => card.id === cardId));
   const target = board.find(column => column.id === targetId);

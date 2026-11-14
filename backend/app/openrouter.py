@@ -1,6 +1,6 @@
 import json
 import os
-from http.client import HTTPException
+from http.client import HTTPException as StdlibHTTPException
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -63,7 +63,7 @@ def complete(messages: list[dict[str, str]], response_schema: dict) -> str:
         if isinstance(error.reason, TimeoutError):
             raise provider_error(408) from None
         raise OpenRouterError(502, "Could not reach OpenRouter. Please try again") from None
-    except (OSError, HTTPException):
+    except (OSError, StdlibHTTPException):
         raise OpenRouterError(502, "Connection to OpenRouter failed. Please try again") from None
     except (ValueError, UnicodeError):
         raise OpenRouterError(502, "OpenRouter returned an invalid response") from None

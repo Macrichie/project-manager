@@ -9,13 +9,16 @@ Forma is a single-board Kanban app with five fixed columns, drag-and-drop cards,
 ## Architecture
 
 **Backend** (`backend/`): Python 3.14, FastAPI, uv for dependency management.
-- `app/main.py` — App factory (`create_app`), mounts API routers + static files, exception handlers, cross-site middleware
-- `app/auth.py` — Cookie-based sessions (in-memory dict, 8h expiry). Hardcoded `user`/`password` credentials
+- `app/main.py` — App factory (`create_app`), wires routers, middleware, error handlers, catch-all API route, static mount
+- `app/middleware.py` — CSRF protection (cross-site + origin check) and cache-control middleware
+- `app/errors.py` — Exception handler registration (BoardNotFound, BoardConflict, StoredBoardError, sqlite3.Error)
+- `app/health.py` — Health and hello endpoint routers
+- `app/auth.py` — Cookie-based sessions (SQLite-backed, 8h expiry, survive restarts). Credentials from `FORMA_USERNAME`/`FORMA_PASSWORD` env vars (default `user`/`password`). Login rate limiting on failed attempts
 - `app/boards.py` — `GET /api/board`, `PUT /api/board` with revision-based conflict detection
 - `app/chat.py` — `POST /api/chat` with system prompt, structured output schema, board save on AI changes
 - `app/openrouter.py` — OpenRouter API client using stdlib `urllib` (no httpx). Model: `openai/gpt-oss-120b`
 - `app/models.py` — Pydantic models: `Board`, `Column`, `Card`, `BoardDocument`. Board enforces exactly 5 columns in fixed ID order (`ideas`, `todo`, `progress`, `review`, `done`) with unique card IDs
-- `app/database.py` — SQLite wrapper with `Database` class. Tables: `users`, `boards`. Seeds from `app/seed.json`
+- `app/database.py` — SQLite wrapper with `Database` class. Tables: `users`, `boards`, `sessions`. Seeds from `app/seed.json`
 
 **Frontend** (`frontend/`): Next.js 16, React 19, TypeScript, Tailwind CSS 4, @dnd-kit for drag-and-drop.
 - `app/page.tsx` — Main page with auth gate
@@ -71,7 +74,8 @@ Set `PLAYWRIGHT_LIVE_AI=1` to include AI sidebar workflows.
 - Board always has exactly 5 columns in order: `ideas`, `todo`, `progress`, `review`, `done`. Column names are renameable but IDs and order are fixed.
 - Card IDs must be unique across the entire board.
 - `PUT /api/board` requires the current `revision` number; stale writes get 409.
-- Sessions are in-memory (not persisted across server restarts). Cookie: `forma_session`, path `/api`.
+- Sessions are SQLite-backed and persist across server restarts. Cookie: `forma_session`, path `/api`.
+- Credentials configurable via `FORMA_USERNAME`/`FORMA_PASSWORD` env vars (default `user`/`password`). Failed logins are rate-limited (5 per 60s per IP).
 - AI chat history is per-request (not stored server-side) and per-tab in the browser (cleared on refresh).
 - The OpenRouter client uses stdlib `urllib`, not `httpx` or `requests`.
 - `.env` file at project root holds `OPENROUTER_API_KEY` (optional for manual board use).

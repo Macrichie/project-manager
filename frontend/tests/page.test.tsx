@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ProjectBoard } from "../app/board-view";
 import { boardApi } from "./board-api";
 let server: ReturnType<typeof boardApi>;
-beforeEach(() => { server = boardApi(); vi.stubGlobal("fetch", server.fetch); });
+beforeEach(() => { server = boardApi(); vi.stubGlobal("fetch", server.fetch); vi.stubGlobal("confirm", () => true); });
 afterEach(() => vi.unstubAllGlobals());
 const Home = () => <ProjectBoard user={{ id: 1, username: "user" }} onSignedOut={() => {}} />;
 it("loads ten saved cards across exactly five columns", async () => {
@@ -189,6 +189,8 @@ it("keeps chat paused during a manual save and restores toggle focus on close", 
   await user.click(screen.getByRole("button", { name: "AI assistant" }));
   await user.type(screen.getByLabelText("Message your assistant"), "My next request");
   await user.click(screen.getByRole("button", { name: "Rename Ideas" }));
+  await user.clear(screen.getByLabelText("Column name"));
+  await user.type(screen.getByLabelText("Column name"), "Backlog");
   let finish!: (response: Response) => void;
   server.fetch.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
   fireEvent.submit(screen.getByLabelText("Column name").closest("form")!);
@@ -198,6 +200,24 @@ it("keeps chat paused during a manual save and restores toggle focus on close", 
   await waitFor(() => expect(screen.getByRole("button", { name: "AI assistant" })).toHaveFocus());
   await user.click(screen.getByRole("button", { name: "AI assistant" }));
   expect(screen.getByLabelText("Message your assistant")).toHaveValue("My next request");
+});
+
+it("appends messages on a successful chat response and updates the board", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  await screen.findByRole("button", { name: "Rename Ideas" });
+  await user.click(screen.getByRole("button", { name: "AI assistant" }));
+  await user.type(screen.getByLabelText("Message your assistant"), "Move c1 to Done");
+  const chatReply = { ...server.read(), revision: 2, reply: "Moved c1 to Done.", updated: true };
+  chatReply.board.columns[4].cards.push(chatReply.board.columns[0].cards.shift()!);
+  server.fetch.mockImplementationOnce(async () => {
+    server.replace({ revision: chatReply.revision, board: chatReply.board });
+    return Response.json(chatReply);
+  });
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByText("Moved c1 to Done.")).toBeInTheDocument();
+  expect(screen.getByRole("log")).toHaveTextContent("Move c1 to Done");
+  expect(screen.getByRole("log")).toHaveTextContent("Moved c1 to Done.");
+  expect(screen.getByLabelText("Message your assistant")).toHaveValue("");
 });
 
 it("serializes pending chat with manual writes and recovers a failed transport without a model reply", async () => {

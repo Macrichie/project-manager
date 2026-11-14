@@ -27,6 +27,8 @@ export function useBoard(onSignedOut: () => void) {
   const [blocked, setBlocked] = useState(true);
   const [error, setError] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [chatError, setChatError] = useState("");
 
@@ -63,7 +65,7 @@ export function useBoard(onSignedOut: () => void) {
 
   async function save(columns: Column[]): Promise<boolean> {
     if (writing.current || pending || blocked || !current.current) return false;
-    if (columns === current.current.board.columns) return true;
+    if (JSON.stringify(columns) === JSON.stringify(current.current.board.columns)) return true;
     const signal = controller.current!.signal;
     writing.current = true;
     setPending(true);
@@ -113,7 +115,7 @@ export function useBoard(onSignedOut: () => void) {
     try {
       const response = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal,
-        body: JSON.stringify({ message, history: messages }),
+        body: JSON.stringify({ message, history: messagesRef.current }),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
@@ -123,7 +125,7 @@ export function useBoard(onSignedOut: () => void) {
       const saved: ChatReply = await response.json();
       if (signal.aborted) return false;
       accept(saved);
-      setMessages([...messages, { role: "user", content: message }, { role: "assistant", content: saved.reply }]);
+      setMessages(prev => [...prev, { role: "user", content: message }, { role: "assistant", content: saved.reply }]);
       return true;
     } catch (failure) {
       if (signal.aborted) return false;

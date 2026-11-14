@@ -4,13 +4,14 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from copy import deepcopy
 from pathlib import Path
+from secrets import token_urlsafe
 from threading import Barrier
-from time import monotonic
+from time import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.auth import COOKIE_NAME, SESSION_SECONDS, Session, User
+from app.auth import COOKIE_NAME, SESSION_SECONDS
 from app.database import SCHEMA, SEED_PATH, BoardConflict, Database
 from app.main import create_app
 from app.models import BoardDocument
@@ -35,7 +36,7 @@ def test_fresh_database_has_the_exact_approved_seed(signed_in):
     assert signed_in.get("/api/board/").json() == response.json()
     with signed_in.app.state.database.connection() as connection:
         tables = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        assert {row["name"] for row in tables} == {"users", "boards"}
+        assert {row["name"] for row in tables} == {"users", "boards", "sessions"}
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
@@ -72,9 +73,9 @@ def test_empty_board_survives_app_restart_without_reseeding(signed_in):
     old_token = signed_in.cookies.get(COOKIE_NAME)
     database_path = signed_in.app.state.database.path
     with TestClient(create_app(database_path.parent.parent / "static", database_path=database_path)) as restarted:
-        assert restarted.get("/api/board", headers={"cookie": f"{COOKIE_NAME}={old_token}"}).status_code == 401
-        restarted.post("/api/auth/login", json=CREDENTIALS)
-        assert restarted.get("/api/board").json() == saved
+        # Session persists in DB; token still valid after restart
+        assert restarted.get("/api/board", headers={"cookie": f"{COOKIE_NAME}={old_token}"}).status_code == 200
+        assert restarted.get("/api/board", headers={"cookie": f"{COOKIE_NAME}={old_token}"}).json() == saved
 
 
 @pytest.mark.parametrize("method", ["GET", "PUT"])
@@ -131,10 +132,9 @@ def test_invalid_board_structure_cannot_change_saved_data(signed_in, change):
 def test_user_can_only_read_and_write_their_own_board(signed_in):
     database = signed_in.app.state.database
     other = database.ensure_user_board("other")
-    signed_in.app.state.sessions["other-token"] = Session(
-        user=User.model_validate(other), expires_at=monotonic() + SESSION_SECONDS
-    )
-    other_headers = {"cookie": f"{COOKIE_NAME}=other-token"}
+    other_token = token_urlsafe(32)
+    database.create_session(other_token, other["id"], time() + SESSION_SECONDS)
+    other_headers = {"cookie": f"{COOKIE_NAME}={other_token}"}
     original = signed_in.get("/api/board").json()
     candidate = signed_in.get("/api/board", headers=other_headers).json()
     candidate["board"]["columns"][0]["cards"][0]["title"] = "Other user's private title"
@@ -238,3 +238,16 @@ def test_login_resolves_the_stored_user_id_instead_of_assuming_one(tmp_path):
         assert client.get("/api/board").status_code == 200
         with client.app.state.database.connection() as connection:
             assert connection.execute("SELECT user_id FROM boards").fetchone()[0] == 42
+
+
+def test_oversized_board_payloads_are_rejected(signed_in):
+    original = signed_in.get("/api/board").json()
+    oversized = deepcopy(original)
+    columns = oversized["board"]["columns"]
+    columns[0]["cards"] = [
+        {"id": f"big-{i}", "title": f"Card {i}", "details": "x" * 10000}
+        for i in range(200)
+    ]
+    response = signed_in.put("/api/board", json=oversized)
+    assert response.status_code == 422
+    assert signed_in.get("/api/board").json() == original

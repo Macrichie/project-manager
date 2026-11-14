@@ -2,7 +2,7 @@
 
 Single-board Kanban app: five renameable columns; add, edit, delete, and drag cards to reorder within or move between columns. Use a card's grip handle, or focus it and press Space, arrow keys, then Space to drop (Escape cancels). FastAPI serves the static Next.js build and API from one Docker container.
 
-Sign in with username `user` and password `password`. Sessions last up to eight hours and survive page refresh; sign out or restart the server to end a session. All board changes save to SQLite and survive refresh, sign-out, and container restart. Saving pauses other changes; conflicts reload saved work and keep open form text for review. Registration is not implemented.
+Sign in with username `user` and password `password` (override with `FORMA_USERNAME` and `FORMA_PASSWORD` environment variables). Sessions last up to eight hours and survive page refresh and container restart; sign out to end a session. Failed login attempts are rate-limited. All board changes save to SQLite and survive refresh, sign-out, and container restart. Saving pauses other changes; conflicts reload saved work and keep open form text for review. Registration is not implemented.
 
 Choose **AI assistant** in the board toolbar to ask questions or create, edit, move, and reorder cards. Valid changes save automatically. The panel sits beside the board on desktop and above it on mobile. Chat stays in this page's memory only: refresh, sign-out, or losing your session clears it; separate tabs have separate conversations. Enter sends, Shift+Enter adds a line, and Escape closes the panel.
 

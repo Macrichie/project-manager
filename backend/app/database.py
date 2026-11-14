@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS boards (
     board_json TEXT NOT NULL CHECK (json_valid(board_json)),
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
 ) STRICT;
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at REAL NOT NULL
+) STRICT;
 """
 
 
@@ -97,6 +102,8 @@ class Database:
                 (document.board.model_dump_json(), user_id, document.revision),
             )
             if result.rowcount == 0:
+                # Safe: the UPDATE acquired a write lock; no concurrent writer can
+                # modify or delete the row before this transaction completes.
                 exists = connection.execute(
                     "SELECT 1 FROM boards WHERE user_id = ?", (user_id,)
                 ).fetchone()
@@ -104,3 +111,30 @@ class Database:
                     raise BoardNotFound
                 raise BoardConflict
         return BoardDocument(revision=document.revision + 1, board=document.board)
+
+    # --- Session persistence ---
+
+    def create_session(self, token: str, user_id: int, expires_at: float) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+                (token, user_id, expires_at),
+            )
+
+    def get_session(self, token: str) -> dict | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT s.user_id, s.expires_at, u.id, u.username "
+                "FROM sessions s JOIN users u ON s.user_id = u.id "
+                "WHERE s.token = ?",
+                (token,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_session(self, token: str) -> None:
+        with self.connection() as connection:
+            connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+    def cleanup_sessions(self, cutoff: float) -> None:
+        with self.connection() as connection:
+            connection.execute("DELETE FROM sessions WHERE expires_at <= ?", (cutoff,))

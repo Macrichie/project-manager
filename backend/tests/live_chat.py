@@ -46,15 +46,16 @@ def test_live_reply_uses_current_owner_board_and_page_history_without_persisting
     phrase = "session-" + uuid4().hex
     history = [{"role": "user", "content": f"Remember my passphrase: {phrase}."},
                {"role": "assistant", "content": "I will use that during this conversation."}]
-    sessions = {token: session.model_dump() for token, session in client.app.state.sessions.items()}
+    with database.connection() as connection:
+        sessions_before = connection.execute("SELECT count(*) FROM sessions").fetchone()[0]
     result = ask(client, "Without changing anything, state the exact title of the first card in Ideas and my earlier passphrase.", history)
     assert not result["updated"] and result["revision"] == saved.revision
     assert title in result["reply"] and phrase in result["reply"]
     assert private_title not in result["reply"]
     assert database.read_board(other["id"]) == other_saved
-    assert {token: session.model_dump() for token, session in client.app.state.sessions.items()} == sessions
     with database.connection() as connection:
-        assert {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} == {"users", "boards"}
+        assert connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == sessions_before
+        assert {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} == {"users", "boards", "sessions"}
         assert all(phrase not in row[0] for row in connection.execute("SELECT board_json FROM boards"))
 
 

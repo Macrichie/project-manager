@@ -5,7 +5,6 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: "./e2e",
-  fullyParallel: true,
   workers: 1,
   timeout: 60000,
   use: { baseURL, trace: "retain-on-failure" },
