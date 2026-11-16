@@ -1,12 +1,16 @@
+import hashlib
+import hmac
 import os
 import secrets
+import sqlite3
 from time import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.database import Database
+from app.models import NonBlank
 
 COOKIE_NAME = "forma_session"
 SESSION_SECONDS = 8 * 60 * 60
@@ -15,9 +19,33 @@ RATE_LIMIT_MAX = 5
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 600_000)
+    return f"pbkdf2:{salt.hex()}:{digest.hex()}"
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    if not password_hash or not password_hash.startswith("pbkdf2:"):
+        return False
+    parts = password_hash.split(":")
+    if len(parts) != 3:
+        return False
+    salt = bytes.fromhex(parts[1])
+    stored_digest = bytes.fromhex(parts[2])
+    computed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 600_000)
+    return hmac.compare_digest(computed, stored_digest)
+
+
 class Credentials(BaseModel):
     username: str
     password: str
+
+
+class Registration(BaseModel):
+    username: Annotated[NonBlank, Field(max_length=50)]
+    password: Annotated[str, Field(min_length=8, max_length=200)]
+    display_name: str = ""
 
 
 class User(BaseModel):
@@ -77,32 +105,56 @@ def _record_failed_attempt(request: Request) -> None:
     login_attempts[client_ip] = attempts
 
 
-@router.post("/login")
-def login(credentials: Credentials, request: Request, response: Response) -> SessionInfo:
-    _check_rate_limit(request)
-    expected_username = os.environ.get("FORMA_USERNAME", "user")
-    expected_password = os.environ.get("FORMA_PASSWORD", "password")
-    username_ok = secrets.compare_digest(credentials.username, expected_username)
-    password_ok = secrets.compare_digest(credentials.password, expected_password)
-    if not (username_ok and password_ok):
-        _record_failed_attempt(request)
-        raise HTTPException(status_code=401, detail="Incorrect username or password")
-    database = _database(request)
-    user = database.get_user(expected_username)
-    if user is None:
-        raise HTTPException(status_code=500, detail="Sign-in data is unavailable")
+def _create_session_response(database: Database, user: dict, request: Request, response: Response) -> SessionInfo:
     old_token = request.cookies.get(COOKIE_NAME, "")
     if old_token:
         database.delete_session(old_token)
     token = secrets.token_urlsafe(32)
     expires_at = time() + SESSION_SECONDS
     database.create_session(token, user["id"], expires_at)
-    session = Session(user=User.model_validate(user), expires_at=expires_at)
+    session = Session(user=User(id=user["id"], username=user["username"]), expires_at=expires_at)
     response.set_cookie(
         COOKIE_NAME, token, max_age=SESSION_SECONDS, path="/api",
         httponly=True, samesite="strict", secure=request.url.scheme == "https",
     )
     return session_info(session)
+
+
+@router.post("/register")
+def register(registration: Registration, request: Request, response: Response) -> SessionInfo:
+    database = _database(request)
+    pw_hash = hash_password(registration.password)
+    try:
+        user = database.register_user(registration.username, pw_hash, registration.display_name)
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail="Username already taken")
+    database.ensure_user_board(registration.username)
+    return _create_session_response(database, user, request, response)
+
+
+@router.post("/login")
+def login(credentials: Credentials, request: Request, response: Response) -> SessionInfo:
+    _check_rate_limit(request)
+    database = _database(request)
+
+    # First try env-var credentials (backward compatibility)
+    expected_username = os.environ.get("FORMA_USERNAME", "user")
+    expected_password = os.environ.get("FORMA_PASSWORD", "password")
+    username_ok = secrets.compare_digest(credentials.username, expected_username)
+    password_ok = secrets.compare_digest(credentials.password, expected_password)
+    if username_ok and password_ok:
+        user = database.get_user(expected_username)
+        if user is None:
+            raise HTTPException(status_code=500, detail="Sign-in data is unavailable")
+        return _create_session_response(database, user, request, response)
+
+    # Then try registered user credentials
+    user = database.get_user(credentials.username)
+    if user is not None and verify_password(credentials.password, user.get("password_hash", "")):
+        return _create_session_response(database, user, request, response)
+
+    _record_failed_attempt(request)
+    raise HTTPException(status_code=401, detail="Incorrect username or password")
 
 
 @router.get("/me")

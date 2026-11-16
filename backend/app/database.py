@@ -11,7 +11,10 @@ SEED_PATH = Path(__file__).with_name("seed.json")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT 'member'
 ) STRICT;
 CREATE TABLE IF NOT EXISTS boards (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT,
@@ -76,9 +79,19 @@ class Database:
     def get_user(self, username: str) -> dict | None:
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT id, username FROM users WHERE username = ?", (username,)
+                "SELECT id, username, password_hash, display_name, role FROM users WHERE username = ?",
+                (username,),
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def register_user(self, username: str, password_hash: str, display_name: str = "") -> dict:
+        with self.connection() as connection:
+            cursor = connection.execute(
+                "INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?)",
+                (username, password_hash, display_name),
+            )
+            user_id = cursor.lastrowid
+        return {"id": user_id, "username": username, "display_name": display_name}
 
     def read_board(self, user_id: int) -> BoardDocument:
         with self.connection() as connection:
