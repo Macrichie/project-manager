@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -18,6 +18,9 @@ class Card(BoardModel):
     id: Annotated[NonBlank, Field(max_length=100)]
     title: Annotated[NonBlank, Field(max_length=5000)]
     details: Annotated[str, Field(max_length=50000)]
+    labels: Annotated[list[str], Field(max_length=10)] = []
+    due_date: Annotated[str | None, Field(max_length=10)] = None
+    priority: Literal["none", "low", "medium", "high"] = "none"
 
 
 class Column(BoardModel):
@@ -42,3 +45,16 @@ class Board(BoardModel):
 class BoardDocument(BoardModel):
     revision: Annotated[int, Field(ge=1)]
     board: Board
+
+
+class CreateBoard(BaseModel):
+    name: NonBlank = Field(max_length=200)
+    description: str = Field(default="", max_length=2000)
+
+
+class BoardListItem(BaseModel):
+    id: int
+    name: str
+    description: str
+    card_count: int
+    updated_at: float

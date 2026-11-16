@@ -25,18 +25,31 @@ def signed_in(client):
     return client
 
 
+CARD_DEFAULTS = {"labels": [], "due_date": None, "priority": "none"}
+
+def _enrich_seed(seed):
+    """Add default card fields to seed data for comparison with API responses."""
+    enriched = deepcopy(seed)
+    for col in enriched["columns"]:
+        for card in col["cards"]:
+            for key, default in CARD_DEFAULTS.items():
+                card.setdefault(key, default)
+    return enriched
+
+
 def test_fresh_database_has_the_exact_approved_seed(signed_in):
     response = signed_in.get("/api/board")
     seed = json.loads(SEED_PATH.read_text(encoding="utf-8"))
     example = Path(__file__).resolve().parents[2] / "docs" / "board.example.json"
     assert seed == json.loads(example.read_text(encoding="utf-8"))
     assert response.status_code == 200
-    assert response.json() == {"revision": 1, "board": seed}
+    enriched = _enrich_seed(seed)
+    assert response.json() == {"revision": 1, "board": enriched}
     assert response.headers["cache-control"] == "no-store"
     assert signed_in.get("/api/board/").json() == response.json()
     with signed_in.app.state.database.connection() as connection:
         tables = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        assert {row["name"] for row in tables} == {"users", "boards", "sessions"}
+        assert {row["name"] for row in tables} >= {"users", "boards", "sessions"}
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
@@ -50,7 +63,7 @@ def test_all_board_operations_round_trip_and_survive_reinitialization(signed_in)
     columns[1]["cards"].insert(1, moved)
     columns[2]["cards"].pop(0)
     columns[3]["cards"][0].update(title="  Long title " + "word " * 300, details="Café\n第二行\n  ")
-    columns[4]["cards"].insert(0, {"id": "new-card", "title": "A new card", "details": ""})
+    columns[4]["cards"].insert(0, {"id": "new-card", "title": "A new card", "details": "", **CARD_DEFAULTS})
     response = signed_in.put("/api/board", json=updated)
     expected = {**updated, "revision": 2}
     assert response.status_code == 200

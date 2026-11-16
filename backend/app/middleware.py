@@ -20,6 +20,9 @@ async def protect_browser_requests(request: Request, call_next):
         response = JSONResponse({"detail": "Cross-site requests are not allowed"}, status_code=403)
     else:
         response = await call_next(request)
-    if request.url.path.startswith("/api/auth/") or request.url.path.rstrip("/") in {"/api/board", "/api/chat"}:
+    path = request.url.path.rstrip("/")
+    if (request.url.path.startswith("/api/auth/")
+        or path in {"/api/board", "/api/chat"}
+        or request.url.path.startswith("/api/boards")):
         response.headers["Cache-Control"] = "no-store"
     return response

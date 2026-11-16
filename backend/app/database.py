@@ -1,6 +1,8 @@
+import json
 import sqlite3
 from contextlib import closing, contextmanager
 from pathlib import Path
+from time import time as now
 
 from pydantic import ValidationError
 
@@ -17,10 +19,16 @@ CREATE TABLE IF NOT EXISTS users (
     role TEXT NOT NULL DEFAULT 'member'
 ) STRICT;
 CREATE TABLE IF NOT EXISTS boards (
-    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    name TEXT NOT NULL DEFAULT 'My Board',
+    description TEXT NOT NULL DEFAULT '',
     board_json TEXT NOT NULL CHECK (json_valid(board_json)),
-    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
 ) STRICT;
+CREATE INDEX IF NOT EXISTS idx_boards_user_id ON boards(user_id);
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -57,9 +65,32 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as connection:
             connection.executescript(SCHEMA)
-        self.ensure_user_board("user")
+        self._ensure_default_user()
+
+    def _ensure_default_user(self) -> None:
+        """Ensure the default env-var user exists with a board."""
+        seed = Board.model_validate_json(SEED_PATH.read_text(encoding="utf-8"))
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT INTO users (username) VALUES (?) ON CONFLICT(username) DO NOTHING",
+                ("user",),
+            )
+            user = dict(connection.execute(
+                "SELECT id, username FROM users WHERE username = ?", ("user",)
+            ).fetchone())
+            existing = connection.execute(
+                "SELECT 1 FROM boards WHERE user_id = ?", (user["id"],)
+            ).fetchone()
+            if existing is None:
+                ts = now()
+                connection.execute(
+                    "INSERT INTO boards (user_id, name, board_json, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (user["id"], "My Board", seed.model_dump_json(), ts, ts),
+                )
 
     def ensure_user_board(self, username: str) -> dict:
+        """Ensure a user exists and has at least one board. Used by registration."""
         seed = Board.model_validate_json(SEED_PATH.read_text(encoding="utf-8"))
         with self.connection() as connection:
             connection.execute(
@@ -69,11 +100,16 @@ class Database:
             user = dict(connection.execute(
                 "SELECT id, username FROM users WHERE username = ?", (username,)
             ).fetchone())
-            connection.execute(
-                "INSERT INTO boards (user_id, board_json) VALUES (?, ?) "
-                "ON CONFLICT(user_id) DO NOTHING",
-                (user["id"], seed.model_dump_json()),
-            )
+            existing = connection.execute(
+                "SELECT 1 FROM boards WHERE user_id = ?", (user["id"],)
+            ).fetchone()
+            if existing is None:
+                ts = now()
+                connection.execute(
+                    "INSERT INTO boards (user_id, name, board_json, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (user["id"], "My Board", seed.model_dump_json(), ts, ts),
+                )
         return user
 
     def get_user(self, username: str) -> dict | None:
@@ -93,11 +129,61 @@ class Database:
             user_id = cursor.lastrowid
         return {"id": user_id, "username": username, "display_name": display_name}
 
-    def read_board(self, user_id: int) -> BoardDocument:
+    # --- Multi-board operations ---
+
+    def create_board(self, user_id: int, name: str, description: str = "") -> dict:
+        seed = Board.model_validate_json(SEED_PATH.read_text(encoding="utf-8"))
+        ts = now()
+        with self.connection() as connection:
+            cursor = connection.execute(
+                "INSERT INTO boards (user_id, name, description, board_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, name, description, seed.model_dump_json(), ts, ts),
+            )
+            return {
+                "id": cursor.lastrowid, "name": name, "description": description,
+                "created_at": ts, "updated_at": ts,
+            }
+
+    def list_boards(self, user_id: int) -> list[dict]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT id, name, description, board_json, updated_at FROM boards "
+                "WHERE user_id = ? ORDER BY created_at ASC",
+                (user_id,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            board_data = json.loads(row["board_json"])
+            card_count = sum(len(col.get("cards", [])) for col in board_data.get("columns", []))
+            result.append({
+                "id": row["id"], "name": row["name"], "description": row["description"],
+                "card_count": card_count, "updated_at": row["updated_at"],
+            })
+        return result
+
+    def get_first_board_id(self, user_id: int) -> int | None:
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT board_json, revision FROM boards WHERE user_id = ?", (user_id,)
+                "SELECT id FROM boards WHERE user_id = ? ORDER BY created_at ASC LIMIT 1",
+                (user_id,),
             ).fetchone()
+        return row["id"] if row else None
+
+    def read_board(self, user_id: int, board_id: int | None = None) -> BoardDocument:
+        with self.connection() as connection:
+            if board_id is None:
+                # Legacy: read first board for user
+                row = connection.execute(
+                    "SELECT board_json, revision FROM boards WHERE user_id = ? "
+                    "ORDER BY created_at ASC LIMIT 1",
+                    (user_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT board_json, revision FROM boards WHERE id = ? AND user_id = ?",
+                    (board_id, user_id),
+                ).fetchone()
         if row is None:
             raise BoardNotFound
         try:
@@ -107,23 +193,51 @@ class Database:
         except ValidationError as error:
             raise StoredBoardError from error
 
-    def save_board(self, user_id: int, document: BoardDocument) -> BoardDocument:
+    def save_board(self, user_id: int, document: BoardDocument, board_id: int | None = None) -> BoardDocument:
         with self.connection() as connection:
+            if board_id is None:
+                # Legacy: save first board for user
+                first = connection.execute(
+                    "SELECT id FROM boards WHERE user_id = ? ORDER BY created_at ASC LIMIT 1",
+                    (user_id,),
+                ).fetchone()
+                if first is None:
+                    raise BoardNotFound
+                board_id = first["id"]
+
+            ts = now()
             result = connection.execute(
-                "UPDATE boards SET board_json = ?, revision = revision + 1 "
-                "WHERE user_id = ? AND revision = ?",
-                (document.board.model_dump_json(), user_id, document.revision),
+                "UPDATE boards SET board_json = ?, revision = revision + 1, updated_at = ? "
+                "WHERE id = ? AND user_id = ? AND revision = ?",
+                (document.board.model_dump_json(), ts, board_id, user_id, document.revision),
             )
             if result.rowcount == 0:
-                # Safe: the UPDATE acquired a write lock; no concurrent writer can
-                # modify or delete the row before this transaction completes.
                 exists = connection.execute(
-                    "SELECT 1 FROM boards WHERE user_id = ?", (user_id,)
+                    "SELECT 1 FROM boards WHERE id = ? AND user_id = ?", (board_id, user_id)
                 ).fetchone()
                 if exists is None:
                     raise BoardNotFound
                 raise BoardConflict
         return BoardDocument(revision=document.revision + 1, board=document.board)
+
+    def delete_board(self, user_id: int, board_id: int) -> None:
+        with self.connection() as connection:
+            count = connection.execute(
+                "SELECT count(*) as cnt FROM boards WHERE user_id = ?", (user_id,)
+            ).fetchone()["cnt"]
+            if count <= 1:
+                raise ValueError("Cannot delete the last board")
+            result = connection.execute(
+                "DELETE FROM boards WHERE id = ? AND user_id = ?", (board_id, user_id)
+            )
+            if result.rowcount == 0:
+                raise BoardNotFound
+
+    def board_count(self, user_id: int) -> int:
+        with self.connection() as connection:
+            return connection.execute(
+                "SELECT count(*) FROM boards WHERE user_id = ?", (user_id,)
+            ).fetchone()[0]
 
     # --- Session persistence ---
 
