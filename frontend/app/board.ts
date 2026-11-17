@@ -1,5 +1,19 @@
-export type Card = { id: string; title: string; details: string };
+export type Card = {
+  id: string;
+  title: string;
+  details: string;
+  labels?: string[];
+  due_date?: string | null;
+  priority?: "none" | "low" | "medium" | "high";
+};
 export type Column = { id: string; name: string; cards: Card[] };
+export type BoardMeta = {
+  id: number;
+  name: string;
+  description: string;
+  card_count: number;
+  updated_at: number;
+};
 export const initialBoard: Column[] = [
   { id: "ideas", name: "Ideas", cards: [
     { id: "c1", title: "A warmer welcome", details: "Explore a simpler onboarding experience that helps people feel at home from day one." },

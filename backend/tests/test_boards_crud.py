@@ -175,6 +175,45 @@ def test_invalid_priority_rejected(signed_in):
     assert response.status_code == 422
 
 
+def test_rename_board(signed_in):
+    boards = signed_in.get("/api/boards").json()
+    board_id = boards[0]["id"]
+    response = signed_in.patch(f"/api/boards/{board_id}", json={"name": "Renamed"})
+    assert response.status_code == 200
+    assert response.json()["name"] == "Renamed"
+    # Verify it persisted
+    boards = signed_in.get("/api/boards").json()
+    assert boards[0]["name"] == "Renamed"
+
+
+def test_update_board_description(signed_in):
+    boards = signed_in.get("/api/boards").json()
+    board_id = boards[0]["id"]
+    response = signed_in.patch(f"/api/boards/{board_id}", json={"description": "Updated desc"})
+    assert response.status_code == 200
+    assert response.json()["description"] == "Updated desc"
+
+
+def test_rename_board_blank_name_returns_422(signed_in):
+    boards = signed_in.get("/api/boards").json()
+    board_id = boards[0]["id"]
+    response = signed_in.patch(f"/api/boards/{board_id}", json={"name": "  "})
+    assert response.status_code == 422
+
+
+def test_rename_nonexistent_board_returns_404(signed_in):
+    response = signed_in.patch("/api/boards/99999", json={"name": "Nope"})
+    assert response.status_code == 404
+
+
+def test_cannot_rename_other_users_board(signed_in):
+    database = signed_in.app.state.database
+    other = database.register_user("renamer", hash_password("pass"), "Renamer")
+    other_board = database.create_board(other["id"], "Their Board", "")
+    response = signed_in.patch(f"/api/boards/{other_board['id']}", json={"name": "Stolen"})
+    assert response.status_code == 404
+
+
 def test_chat_with_board_id(signed_in):
     """Chat endpoint should work with board_id path parameter."""
     boards = signed_in.get("/api/boards").json()

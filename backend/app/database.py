@@ -220,18 +220,39 @@ class Database:
                 raise BoardConflict
         return BoardDocument(revision=document.revision + 1, board=document.board)
 
+    def update_board_meta(self, user_id: int, board_id: int, name: str | None = None, description: str | None = None) -> dict:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, name, description, updated_at FROM boards WHERE id = ? AND user_id = ?",
+                (board_id, user_id),
+            ).fetchone()
+            if row is None:
+                raise BoardNotFound
+            new_name = name if name is not None else row["name"]
+            new_desc = description if description is not None else row["description"]
+            ts = now()
+            connection.execute(
+                "UPDATE boards SET name = ?, description = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (new_name, new_desc, ts, board_id, user_id),
+            )
+            return {"id": board_id, "name": new_name, "description": new_desc, "updated_at": ts}
+
     def delete_board(self, user_id: int, board_id: int) -> None:
         with self.connection() as connection:
+            # Check ownership first to avoid leaking board existence
+            exists = connection.execute(
+                "SELECT 1 FROM boards WHERE id = ? AND user_id = ?", (board_id, user_id)
+            ).fetchone()
+            if exists is None:
+                raise BoardNotFound
             count = connection.execute(
                 "SELECT count(*) as cnt FROM boards WHERE user_id = ?", (user_id,)
             ).fetchone()["cnt"]
             if count <= 1:
                 raise ValueError("Cannot delete the last board")
-            result = connection.execute(
+            connection.execute(
                 "DELETE FROM boards WHERE id = ? AND user_id = ?", (board_id, user_id)
             )
-            if result.rowcount == 0:
-                raise BoardNotFound
 
     def board_count(self, user_id: int) -> int:
         with self.connection() as connection:

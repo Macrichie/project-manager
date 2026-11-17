@@ -6,7 +6,7 @@ import { boardApi } from "./board-api";
 let server: ReturnType<typeof boardApi>;
 beforeEach(() => { server = boardApi(); vi.stubGlobal("fetch", server.fetch); vi.stubGlobal("confirm", () => true); });
 afterEach(() => vi.unstubAllGlobals());
-const Home = () => <ProjectBoard user={{ id: 1, username: "user" }} onSignedOut={() => {}} />;
+const Home = () => <ProjectBoard user={{ id: 1, username: "user" }} boardId={1} boardName="My Board" onSignedOut={() => {}} onBack={() => {}} />;
 it("loads ten saved cards across exactly five columns", async () => {
   render(<Home />);
   await screen.findByRole("button", { name: "Rename Ideas" });
@@ -89,7 +89,7 @@ it("edits title/details, preserves ID and text, validates blanks, and cancels", 
   await user.type(screen.getByLabelText(/Details/), "  Café{Enter}Second line  ");
   await user.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByRole("heading", { name: "Revised title" })).toBeInTheDocument();
-  expect(server.read().board.columns[0].cards[0]).toEqual({ id: "c1", title: "Revised title", details: "  Café\nSecond line  " });
+  expect(server.read().board.columns[0].cards[0]).toEqual(expect.objectContaining({ id: "c1", title: "Revised title", details: "  Café\nSecond line  " }));
   expect(server.read().revision).toBe(2);
   await user.click(screen.getByRole("button", { name: "Edit Revised title" }));
   await user.type(screen.getByLabelText("Title"), " discarded{Escape}");
@@ -174,7 +174,7 @@ it("reconciles a committed save whose response was lost without retrying it", as
 it.each(["load", "save"])("reports authentication loss during board %s", async phase => {
   const signedOut = vi.fn();
   if (phase === "load") server.fetch.mockResolvedValueOnce(Response.json({}, { status: 401 }));
-  render(<ProjectBoard user={{ id: 1, username: "user" }} onSignedOut={signedOut} />);
+  render(<ProjectBoard user={{ id: 1, username: "user" }} boardId={1} boardName="My Board" onSignedOut={signedOut} onBack={() => {}} />);
   if (phase === "save") {
     await screen.findByRole("button", { name: "Delete A warmer welcome" });
     server.fetch.mockResolvedValueOnce(Response.json({}, { status: 401 }));
@@ -231,7 +231,7 @@ it("serializes pending chat with manual writes and recovers a failed transport w
   expect(screen.getByRole("button", { name: "Delete A warmer welcome" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   fireEvent.submit(screen.getByLabelText("Message your assistant").closest("form")!);
-  expect(server.fetch.mock.calls.filter(([url]) => url === "/api/chat")).toHaveLength(1);
+  expect(server.fetch.mock.calls.filter(([url]) => url === "/api/boards/1/chat")).toHaveLength(1);
   await act(async () => fail(new TypeError("Failed to fetch")));
   expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't confirm");
   expect(screen.getByLabelText("Message your assistant")).toHaveValue("Keep this request");

@@ -9,8 +9,12 @@ class BoardRequestError extends Error {
   constructor(public status: number, detail = "Board request failed") { super(detail); }
 }
 
-async function requestBoard(signal: AbortSignal, document?: BoardDocument): Promise<BoardDocument> {
-  const response = await fetch("/api/board", {
+function boardUrl(boardId: number) {
+  return `/api/boards/${boardId}`;
+}
+
+async function requestBoard(signal: AbortSignal, boardId: number, document?: BoardDocument): Promise<BoardDocument> {
+  const response = await fetch(boardUrl(boardId), {
     cache: "no-store", signal,
     ...(document && { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(document) }),
   });
@@ -18,7 +22,7 @@ async function requestBoard(signal: AbortSignal, document?: BoardDocument): Prom
   return response.json();
 }
 
-export function useBoard(onSignedOut: () => void) {
+export function useBoard(boardId: number, onSignedOut: () => void) {
   const [document, setDocument] = useState<BoardDocument>();
   const current = useRef<BoardDocument>(undefined);
   const controller = useRef<AbortController>(null);
@@ -41,18 +45,24 @@ export function useBoard(onSignedOut: () => void) {
   const load = useCallback(async () => {
     const signal = controller.current!.signal;
     try {
-      const saved = await requestBoard(signal);
+      const saved = await requestBoard(signal, boardId);
       if (!signal.aborted) accept(saved);
     } catch (failure) {
       if (signal.aborted) return;
       if (failure instanceof BoardRequestError && failure.status === 401) onSignedOut();
       else { setBlocked(true); setError("Couldn't load your saved board. Please try again."); }
     } finally { if (!signal.aborted) setPending(false); }
-  }, [accept, onSignedOut]);
+  }, [accept, onSignedOut, boardId]);
 
   useEffect(() => {
     const lifetime = new AbortController();
     controller.current = lifetime;
+    setDocument(undefined);
+    setPending(true);
+    setBlocked(true);
+    setError("");
+    setMessages([]);
+    setChatError("");
     void load();
     return () => lifetime.abort();
   }, [load]);
@@ -71,7 +81,7 @@ export function useBoard(onSignedOut: () => void) {
     setPending(true);
     setError("");
     try {
-      const saved = await requestBoard(signal, { revision: current.current.revision, board: { columns } });
+      const saved = await requestBoard(signal, boardId, { revision: current.current.revision, board: { columns } });
       if (signal.aborted) return false;
       accept(saved);
       return true;
@@ -81,7 +91,6 @@ export function useBoard(onSignedOut: () => void) {
       const message = failure instanceof BoardRequestError && failure.status === 409
         ? "This board changed elsewhere. The latest saved board is loaded. Review it and try your change again."
         : "Couldn't confirm your change. The latest saved board is loaded. Review it before trying again.";
-      // A lost response may follow a committed write. Read before allowing another save.
       if (await recover(signal)) setError(message);
       return false;
     } finally {
@@ -92,7 +101,7 @@ export function useBoard(onSignedOut: () => void) {
 
   async function recover(signal: AbortSignal): Promise<boolean> {
     try {
-      const saved = await requestBoard(signal);
+      const saved = await requestBoard(signal, boardId);
       if (signal.aborted) return false;
       accept(saved);
       return true;
@@ -113,7 +122,7 @@ export function useBoard(onSignedOut: () => void) {
     setError("");
     setChatError("");
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch(`/api/boards/${boardId}/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" }, signal,
         body: JSON.stringify({ message, history: messagesRef.current }),
       });

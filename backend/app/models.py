@@ -52,6 +52,11 @@ class CreateBoard(BaseModel):
     description: str = Field(default="", max_length=2000)
 
 
+class UpdateBoard(BaseModel):
+    name: NonBlank | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+
+
 class BoardListItem(BaseModel):
     id: int
     name: str

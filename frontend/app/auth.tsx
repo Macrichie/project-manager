@@ -53,12 +53,18 @@ export function AuthGate({ children }: { children: (user: User, onSignedOut: () 
       <span className="auth-card-accent" />
       <p className="auth-kicker">YOUR WORKSPACE, AWAITING YOU</p>
       <h2>Welcome back</h2><p>Sign in and pick up where you left off.</p>
-      {session === undefined ? <div className="auth-loading" role="status">{error ? <><p role="alert">{error}</p><button className="primary-button" onClick={() => void checkSession()}>Try again</button></> : <><LoaderCircle className="spinning" size={18} /> Opening your workspace...</>}</div> : <SignIn onSignedIn={setSession} />}
+      {session === undefined ? <div className="auth-loading" role="status">{error ? <><p role="alert">{error}</p><button className="primary-button" onClick={() => void checkSession()}>Try again</button></> : <><LoaderCircle className="spinning" size={18} /> Opening your workspace...</>}</div> : <AuthForms onSignedIn={setSession} />}
     </section>
   </div>;
 }
 
-function SignIn({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
+function AuthForms({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
+  const [mode, setMode] = useState<"signin" | "register">("signin");
+  if (mode === "register") return <Register onSignedIn={onSignedIn} onBack={() => setMode("signin")} />;
+  return <SignIn onSignedIn={onSignedIn} onCreateAccount={() => setMode("register")} />;
+}
+
+function SignIn({ onSignedIn, onCreateAccount }: { onSignedIn: (session: Session) => void; onCreateAccount: () => void }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -78,7 +84,43 @@ function SignIn({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
     <label htmlFor="password">Password</label><input id="password" name="password" type="password" autoComplete="current-password" placeholder="Your password" required disabled={pending} />
     {error && <p role="alert" className="auth-error">{error}</p>}
     <button className="primary-button signin-submit" disabled={pending}>{pending ? <><LoaderCircle className="spinning" size={17} /> Signing in...</> : <>Sign in <ArrowRight size={17} /></>}</button>
-    <p className="signin-note">One board. A clear place to begin.</p>
+    <p className="signin-note">Don&apos;t have an account? <button type="button" className="text-link" onClick={onCreateAccount}>Create one</button></p>
+  </form>;
+}
+
+function Register({ onSignedIn, onBack }: { onSignedIn: (session: Session) => void; onBack: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    setPending(true); setError("");
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: String(data.get("username")).trim(),
+          password: String(data.get("password")),
+          display_name: String(data.get("display_name")).trim(),
+        }),
+      });
+      if (response.status === 409) setError("That username is already taken. Try another.");
+      else if (response.status === 422) setError("Please check your details. Username must not be blank, password must be at least 8 characters.");
+      else if (!response.ok) setError("We couldn't create your account. Please try again.");
+      else onSignedIn(await response.json());
+    } catch { setError("We couldn't reach the server. Please try again."); }
+    finally { setPending(false); }
+  }
+  return <form onSubmit={submit} aria-busy={pending}>
+    <label htmlFor="reg-display">Display name <span className="label-hint">(optional)</span></label>
+    <input id="reg-display" name="display_name" autoComplete="name" placeholder="How should we greet you?" disabled={pending} />
+    <label htmlFor="reg-username">Username</label>
+    <input id="reg-username" name="username" autoComplete="username" placeholder="Pick a username" required pattern=".*\S.*" disabled={pending} />
+    <label htmlFor="reg-password">Password</label>
+    <input id="reg-password" name="password" type="password" autoComplete="new-password" placeholder="At least 8 characters" required minLength={8} disabled={pending} />
+    {error && <p role="alert" className="auth-error">{error}</p>}
+    <button className="primary-button signin-submit" disabled={pending}>{pending ? <><LoaderCircle className="spinning" size={17} /> Creating account...</> : <>Create account <ArrowRight size={17} /></>}</button>
+    <p className="signin-note">Already have an account? <button type="button" className="text-link" onClick={onBack}>Sign in</button></p>
   </form>;
 }
 

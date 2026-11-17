@@ -9,7 +9,7 @@ beforeEach(() => { server = boardApi(); vi.stubGlobal("fetch", server.fetch); })
 afterEach(() => { vi.unstubAllGlobals(); signedOut.mockReset(); });
 
 function renderBoard() {
-  return renderHook(() => useBoard(signedOut));
+  return renderHook(() => useBoard(1, signedOut));
 }
 
 it("loads board on mount and exposes columns", async () => {
