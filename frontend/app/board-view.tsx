@@ -1,10 +1,10 @@
 "use client";
-import { useRef, useState, type ComponentProps } from "react";
+import { useMemo, useRef, useState, type ComponentProps } from "react";
 import Link from "next/link";
 import { closestCenter, closestCorners, DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDndContext, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ArrowLeft, Check, Columns3, GripVertical, Layers3, Plus, X, Pencil, ArrowUpRight, Sparkles, Calendar, Tag, Flag } from "lucide-react";
+import { ArrowLeft, Check, Columns3, GripVertical, Layers3, Plus, X, Pencil, ArrowUpRight, Sparkles, Calendar, Tag, Flag, Search, Filter } from "lucide-react";
 import { moveCard, type Card, type Column } from "./board";
 import { AccountMenu, type User } from "./auth";
 import { useBoard } from "./use-board";
@@ -60,6 +60,17 @@ function CardForm({ card, pending, onSave, onCancel }: { card?: Card; pending: b
 
 const PRIORITY_CLASSES: Record<string, string> = { high: "priority-high", medium: "priority-medium", low: "priority-low" };
 
+function dueStatus(due_date: string | null | undefined): "overdue" | "due-today" | "due-soon" | "" {
+  if (!due_date) return "";
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const due = new Date(due_date + "T00:00:00");
+  const diff = (due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
+  if (diff < 0) return "overdue";
+  if (diff < 1) return "due-today";
+  if (diff <= 3) return "due-soon";
+  return "";
+}
+
 function TaskCard({ card, onDelete, onEdit, busy = false, editRef, overlay = false, dragging = false, handleProps }: { card: Card; onDelete?: () => void; onEdit?: () => void; busy?: boolean; editRef?: ComponentProps<"button">["ref"]; overlay?: boolean; dragging?: boolean; handleProps?: ComponentProps<"button"> }) {
   const priorityClass = card.priority && card.priority !== "none" ? PRIORITY_CLASSES[card.priority] ?? "" : "";
   return <article aria-hidden={overlay || undefined} className={`task-card ${dragging ? "dragging" : ""} ${overlay ? "overlay" : ""} ${priorityClass}`}>
@@ -75,7 +86,7 @@ function TaskCard({ card, onDelete, onEdit, busy = false, editRef, overlay = fal
     {((card.labels && card.labels.length > 0) || card.due_date || (card.priority && card.priority !== "none")) && (
       <div className="card-meta">
         {card.priority && card.priority !== "none" && <span className={`card-priority ${priorityClass}`}><Flag size={11} /> {card.priority}</span>}
-        {card.due_date && <span className="card-due"><Calendar size={11} /> {card.due_date}</span>}
+        {card.due_date && <span className={`card-due ${dueStatus(card.due_date)}`}><Calendar size={11} /> {card.due_date}</span>}
         {card.labels && card.labels.length > 0 && <div className="card-labels">{card.labels.map(label => <span key={label} className="card-label">{label}</span>)}</div>}
       </div>
     )}
@@ -115,11 +126,33 @@ function BoardColumn({ column, index, busy, onRename, onAdd, onEdit, onDelete }:
     {adding ? <CardForm pending={busy} onSave={onAdd} onCancel={closeAdd} /> : <button disabled={busy} ref={addButton} className="add-card" onClick={() => setAdding(true)} aria-label={`New card in ${column.name}`}><Plus size={16} /> Add card</button>}
   </section>;
 }
+type CardFilter = { search: string; priority: string; label: string; dueStatus: string };
+const EMPTY_FILTER: CardFilter = { search: "", priority: "", label: "", dueStatus: "" };
+
+function matchesFilter(card: Card, filter: CardFilter): boolean {
+  if (filter.search) {
+    const q = filter.search.toLowerCase();
+    if (!card.title.toLowerCase().includes(q) && !card.details.toLowerCase().includes(q)) return false;
+  }
+  if (filter.priority && (card.priority ?? "none") !== filter.priority) return false;
+  if (filter.label && !(card.labels ?? []).some(l => l.toLowerCase() === filter.label.toLowerCase())) return false;
+  if (filter.dueStatus) {
+    const status = dueStatus(card.due_date);
+    if (filter.dueStatus === "overdue" && status !== "overdue") return false;
+    if (filter.dueStatus === "due-soon" && status !== "due-today" && status !== "due-soon") return false;
+    if (filter.dueStatus === "has-date" && !card.due_date) return false;
+    if (filter.dueStatus === "no-date" && card.due_date) return false;
+  }
+  return true;
+}
+
 export function ProjectBoard({ user, boardId, boardName, onSignedOut, onBack }: { user: User; boardId: number; boardName?: string; onSignedOut: () => void; onBack: () => void }) {
   const { board: savedBoard, save, reload, pending, blocked, error, chat } = useBoard(boardId, onSignedOut);
   const board = savedBoard ?? [];
   const [active, setActive] = useState<Card | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [filter, setFilter] = useState<CardFilter>(EMPTY_FILTER);
+  const [filterOpen, setFilterOpen] = useState(false);
   const chatToggle = useRef<HTMLButtonElement>(null);
   function closeChat() { setChatOpen(false); requestAnimationFrame(() => chatToggle.current?.focus()); }
   // Follow board order rather than the rotated overlay's geometry.
@@ -162,10 +195,28 @@ export function ProjectBoard({ user, boardId, boardName, onSignedOut, onBack }: 
   }
   const total = board.reduce((sum, column) => sum + column.cards.length, 0);
   const done = board[4]?.cards.length ?? 0;
+  const hasFilter = filter.search || filter.priority || filter.label || filter.dueStatus;
+  const filteredBoard = useMemo(() => {
+    if (!hasFilter) return board;
+    return board.map(col => ({ ...col, cards: col.cards.filter(c => matchesFilter(c, filter)) }));
+  }, [board, filter, hasFilter]);
+  const allLabels = useMemo(() => {
+    const set = new Set<string>();
+    for (const col of board) for (const card of col.cards) for (const l of card.labels ?? []) set.add(l);
+    return [...set].sort();
+  }, [board]);
+  const filteredTotal = hasFilter ? filteredBoard.reduce((s, c) => s + c.cards.length, 0) : total;
   return <><header className="app-header"><Link className="brand" href="/" aria-label="Forma home"><span className="brand-icon"><Layers3 size={21} /></span>forma<span className="brand-period">.</span></Link><div className="header-divider" /><button className="back-button" onClick={onBack} aria-label="Back to boards"><ArrowLeft size={16} /> Boards</button><span className="workspace-label">{user.username}&apos;s workspace</span><AccountMenu user={user} onSignedOut={onSignedOut} /></header>
     <main><div className="breadcrumb"><button className="breadcrumb-link" onClick={onBack}>Boards</button> <span>/</span> <span>{boardName ?? "Board"}</span></div><section className="board-intro"><div><div className="eyebrow"><span /> A LITTLE STRUCTURE. A LOT OF POSSIBILITIES.</div><h1>Great work starts here<span>.</span></h1><p>A clear space for your ideas, your progress, and your next big thing.</p></div><div className="board-symbol" aria-hidden="true"><Columns3 size={30} /><ArrowUpRight size={18} /></div></section>
-    <div className="board-toolbar"><div className="board-tab"><Columns3 size={17} /> Project board</div><div className="board-summary"><span>{total} cards</span><span className="summary-divider" /><span className="completion"><span style={{ width: `${total ? done / total * 100 : 0}%` }} /></span><span>{done} of {total} complete</span></div><button ref={chatToggle} className={`chat-toggle ${chatOpen ? "selected" : ""}`} aria-label="AI assistant" aria-expanded={chatOpen} aria-controls="board-assistant" onClick={() => chatOpen ? closeChat() : setChatOpen(true)}><Sparkles size={16} /><span>AI assistant</span></button></div>
+    <div className="board-toolbar"><div className="board-tab"><Columns3 size={17} /> Project board</div><div className="board-summary"><span>{total} cards</span><span className="summary-divider" /><span className="completion"><span style={{ width: `${total ? done / total * 100 : 0}%` }} /></span><span>{done} of {total} complete</span></div><button className={`filter-toggle ${filterOpen ? "selected" : ""}`} aria-label="Filter cards" aria-expanded={filterOpen} onClick={() => setFilterOpen(!filterOpen)}><Filter size={15} /><span>Filter</span>{hasFilter && <span className="filter-badge">{filteredTotal}</span>}</button><button ref={chatToggle} className={`chat-toggle ${chatOpen ? "selected" : ""}`} aria-label="AI assistant" aria-expanded={chatOpen} aria-controls="board-assistant" onClick={() => chatOpen ? closeChat() : setChatOpen(true)}><Sparkles size={16} /><span>AI assistant</span></button></div>
+    {filterOpen && <div className="filter-bar" role="search" aria-label="Filter cards">
+      <label className="filter-field"><Search size={14} /><input type="search" placeholder="Search cards..." value={filter.search} onChange={e => setFilter(f => ({ ...f, search: e.target.value }))} aria-label="Search cards" /></label>
+      <label className="filter-field"><Flag size={13} /><select value={filter.priority} onChange={e => setFilter(f => ({ ...f, priority: e.target.value }))} aria-label="Filter by priority"><option value="">Any priority</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="none">None</option></select></label>
+      {allLabels.length > 0 && <label className="filter-field"><Tag size={13} /><select value={filter.label} onChange={e => setFilter(f => ({ ...f, label: e.target.value }))} aria-label="Filter by label"><option value="">Any label</option>{allLabels.map(l => <option key={l} value={l}>{l}</option>)}</select></label>}
+      <label className="filter-field"><Calendar size={13} /><select value={filter.dueStatus} onChange={e => setFilter(f => ({ ...f, dueStatus: e.target.value }))} aria-label="Filter by due date"><option value="">Any due date</option><option value="overdue">Overdue</option><option value="due-soon">Due soon</option><option value="has-date">Has date</option><option value="no-date">No date</option></select></label>
+      {hasFilter && <button className="text-button filter-clear" onClick={() => setFilter(EMPTY_FILTER)}>Clear filters</button>}
+    </div>}
     {error && <div className="board-error" role="alert"><span>{error}</span>{blocked && <button className="text-button" disabled={pending} onClick={() => void reload()}>Reload board</button>}</div>}
-    <div className={`workspace ${chatOpen ? "chat-open" : ""}`}><div className="board-area">{!savedBoard ? <div className="board-loading" role="status">{pending ? "Loading your board..." : "Your saved board is unavailable."}</div> : <DndContext id="kanban" sensors={sensors} collisionDetection={boardCollisions} accessibility={{ announcements: dndAnnouncements }} onDragStart={event => setActive(board.flatMap(column => column.cards).find(card => card.id === event.active.id) ?? null)} onDragEnd={finishDrag} onDragCancel={() => setActive(null)}><div className="board-scroll"><div className="board">{board.map((column, index) => <BoardColumn key={column.id} column={column} index={index} busy={pending || blocked} onRename={name => save(board.map(item => item.id === column.id ? { ...item, name } : item))} onAdd={(title, details, priority, labels, due_date) => save(board.map(item => item.id === column.id ? { ...item, cards: [...item.cards, { id: crypto.randomUUID(), title, details, priority, labels, due_date }] } : item))} onEdit={(id, title, details, priority, labels, due_date) => save(board.map(item => ({ ...item, cards: item.cards.map(card => card.id === id ? { ...card, title, details, priority, labels, due_date } : card) })))} onDelete={id => { if (confirm("Delete this card? This cannot be undone.")) void save(board.map(item => ({ ...item, cards: item.cards.filter(card => card.id !== id) }))); }} />)}</div></div><DragOverlay>{active ? <TaskCard card={active} overlay /> : null}</DragOverlay></DndContext>}</div><ChatPanel open={chatOpen} onClose={closeChat} busy={pending || blocked || Boolean(active)} messages={chat.messages} pendingMessage={chat.pendingMessage} error={chat.error} onSend={chat.send} /></div>
+    <div className={`workspace ${chatOpen ? "chat-open" : ""}`}><div className="board-area">{!savedBoard ? <div className="board-loading" role="status">{pending ? "Loading your board..." : "Your saved board is unavailable."}</div> : <DndContext id="kanban" sensors={sensors} collisionDetection={boardCollisions} accessibility={{ announcements: dndAnnouncements }} onDragStart={event => setActive(board.flatMap(column => column.cards).find(card => card.id === event.active.id) ?? null)} onDragEnd={finishDrag} onDragCancel={() => setActive(null)}><div className="board-scroll"><div className="board">{filteredBoard.map((column, index) => <BoardColumn key={column.id} column={column} index={index} busy={pending || blocked} onRename={name => save(board.map(item => item.id === column.id ? { ...item, name } : item))} onAdd={(title, details, priority, labels, due_date) => save(board.map(item => item.id === column.id ? { ...item, cards: [...item.cards, { id: crypto.randomUUID(), title, details, priority, labels, due_date }] } : item))} onEdit={(id, title, details, priority, labels, due_date) => save(board.map(item => ({ ...item, cards: item.cards.map(card => card.id === id ? { ...card, title, details, priority, labels, due_date } : card) })))} onDelete={id => { if (confirm("Delete this card? This cannot be undone.")) void save(board.map(item => ({ ...item, cards: item.cards.filter(card => card.id !== id) }))); }} />)}</div></div><DragOverlay>{active ? <TaskCard card={active} overlay /> : null}</DragOverlay></DndContext>}</div><ChatPanel open={chatOpen} onClose={closeChat} busy={pending || blocked || Boolean(active)} messages={chat.messages} pendingMessage={chat.pendingMessage} error={chat.error} onSend={chat.send} /></div>
     <footer><span><GripVertical size={14} /> Grab a card and make your next move.</span><span aria-live="polite">{pending ? (chat.pendingMessage ? "Working with your assistant..." : savedBoard ? "Saving changes..." : "Opening your board...") : error ? "Please review the message above." : "All changes saved"}</span></footer></main></>;
 }

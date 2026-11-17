@@ -120,6 +120,13 @@ class Database:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def update_password(self, user_id: int, password_hash: str) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (password_hash, user_id),
+            )
+
     def register_user(self, username: str, password_hash: str, display_name: str = "") -> dict:
         with self.connection() as connection:
             cursor = connection.execute(

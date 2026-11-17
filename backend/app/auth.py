@@ -48,6 +48,11 @@ class Registration(BaseModel):
     display_name: str = ""
 
 
+class PasswordChange(BaseModel):
+    current_password: Annotated[str, Field(min_length=1)]
+    new_password: Annotated[str, Field(min_length=8, max_length=200)]
+
+
 class User(BaseModel):
     id: int
     username: str
@@ -160,6 +165,21 @@ def login(credentials: Credentials, request: Request, response: Response) -> Ses
 @router.get("/me")
 def current_user(session: Annotated[Session, Depends(require_session)]) -> SessionInfo:
     return session_info(session)
+
+
+@router.post("/change-password", status_code=200)
+def change_password(
+    body: PasswordChange, request: Request, session: Annotated[Session, Depends(require_session)]
+) -> dict:
+    database = _database(request)
+    user = database.get_user(session.user.username)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not verify_password(body.current_password, user.get("password_hash", "")):
+        raise HTTPException(status_code=403, detail="Current password is incorrect")
+    new_hash = hash_password(body.new_password)
+    database.update_password(session.user.id, new_hash)
+    return {"detail": "Password updated successfully"}
 
 
 @router.post("/logout", status_code=204)

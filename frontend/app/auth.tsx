@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, Layers3, LoaderCircle, LogOut } from "lucide-react";
+import { ArrowRight, Layers3, LoaderCircle, LogOut, KeyRound, Check } from "lucide-react";
 
 export type User = { id: number; username: string };
 type Session = { user: User; expires_in: number };
@@ -124,9 +124,48 @@ function Register({ onSignedIn, onBack }: { onSignedIn: (session: Session) => vo
   </form>;
 }
 
+function ChangePasswordForm({ onClose }: { onClose: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    setPending(true); setError(""); setSuccess(false);
+    try {
+      const response = await fetch("/api/auth/change-password", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          current_password: String(data.get("current_password")),
+          new_password: String(data.get("new_password")),
+        }),
+      });
+      if (response.status === 403) setError("Current password is incorrect.");
+      else if (response.status === 422) setError("New password must be at least 8 characters.");
+      else if (!response.ok) setError("Could not change password. Please try again.");
+      else { setSuccess(true); setTimeout(onClose, 1500); }
+    } catch { setError("Could not reach the server. Please try again."); }
+    finally { setPending(false); }
+  }
+  return <div className="password-dialog" role="dialog" aria-label="Change password">
+    <form onSubmit={submit}>
+      <h3>Change password</h3>
+      <label>Current password<input name="current_password" type="password" autoComplete="current-password" required disabled={pending || success} /></label>
+      <label>New password<input name="new_password" type="password" autoComplete="new-password" placeholder="At least 8 characters" required minLength={8} disabled={pending || success} /></label>
+      {error && <p role="alert" className="auth-error">{error}</p>}
+      {success && <p className="password-success"><Check size={14} /> Password updated!</p>}
+      <div className="form-actions">
+        <button className="primary-button" type="submit" disabled={pending || success}>{pending ? <><LoaderCircle className="spinning" size={14} /> Updating...</> : "Update password"}</button>
+        <button className="text-button" type="button" onClick={onClose}>Cancel</button>
+      </div>
+    </form>
+  </div>;
+}
+
 export function AccountMenu({ user, onSignedOut }: { user: User; onSignedOut: () => void }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
   async function signOut() {
     setPending(true); setError("");
     try {
@@ -136,5 +175,11 @@ export function AccountMenu({ user, onSignedOut }: { user: User; onSignedOut: ()
     } catch { setError("Could not sign out. Please try again."); }
     finally { setPending(false); }
   }
-  return <div className="account-menu"><div className="session-indicator"><span /> {user.username}&apos;s workspace</div><button className="logout-button" onClick={signOut} disabled={pending}>{pending ? <LoaderCircle className="spinning" size={14} /> : <LogOut size={14} />} {pending ? "Signing out..." : "Sign out"}</button>{error && <span className="account-error" role="alert">{error}</span>}</div>;
+  return <div className="account-menu">
+    <div className="session-indicator"><span /> {user.username}&apos;s workspace</div>
+    <button className="account-action-button" onClick={() => setShowPasswordChange(true)} aria-label="Change password" title="Change password"><KeyRound size={14} /></button>
+    <button className="logout-button" onClick={signOut} disabled={pending}>{pending ? <LoaderCircle className="spinning" size={14} /> : <LogOut size={14} />} {pending ? "Signing out..." : "Sign out"}</button>
+    {error && <span className="account-error" role="alert">{error}</span>}
+    {showPasswordChange && <ChangePasswordForm onClose={() => setShowPasswordChange(false)} />}
+  </div>;
 }

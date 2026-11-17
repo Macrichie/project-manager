@@ -128,6 +128,54 @@ def test_card_with_all_enhanced_fields(signed_in):
     assert card["priority"] == "high"
 
 
+def test_change_password_requires_current_password(client):
+    """Cannot change password without providing correct current password."""
+    client.post("/api/auth/register", json={
+        "username": "pwuser", "password": "oldpass123", "display_name": "PW User"
+    })
+    response = client.post("/api/auth/change-password", json={
+        "current_password": "wrongpass", "new_password": "newpass123"
+    })
+    assert response.status_code == 403
+    assert "incorrect" in response.json()["detail"].lower()
+
+
+def test_change_password_succeeds(client):
+    """Password change works with correct current password."""
+    client.post("/api/auth/register", json={
+        "username": "pwuser2", "password": "oldpass123",
+    })
+    response = client.post("/api/auth/change-password", json={
+        "current_password": "oldpass123", "new_password": "newpass456"
+    })
+    assert response.status_code == 200
+    # Logout and login with new password
+    client.post("/api/auth/logout")
+    response = client.post("/api/auth/login", json={
+        "username": "pwuser2", "password": "newpass456"
+    })
+    assert response.status_code == 200
+
+
+def test_change_password_rejects_short_new_password(client):
+    """New password must be at least 8 characters."""
+    client.post("/api/auth/register", json={
+        "username": "pwuser3", "password": "oldpass123",
+    })
+    response = client.post("/api/auth/change-password", json={
+        "current_password": "oldpass123", "new_password": "short"
+    })
+    assert response.status_code == 422
+
+
+def test_change_password_requires_auth(client):
+    """Cannot change password without being signed in."""
+    response = client.post("/api/auth/change-password", json={
+        "current_password": "old", "new_password": "newpass123"
+    })
+    assert response.status_code == 401
+
+
 def test_rename_board_preserves_content(signed_in):
     """Renaming a board does not affect its card content."""
     boards = signed_in.get("/api/boards").json()

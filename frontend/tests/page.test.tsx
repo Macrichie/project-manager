@@ -239,3 +239,109 @@ it("serializes pending chat with manual writes and recovers a failed transport w
   expect(screen.getByRole("log")).not.toHaveTextContent("Keep this request");
   expect(screen.getAllByRole("article")).toHaveLength(10);
 });
+
+it("adds a card with priority, labels, and due date", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  await user.click(await screen.findByRole("button", { name: "New card in Ideas" }));
+  await user.type(screen.getByLabelText("Title"), "Important task");
+  await user.selectOptions(screen.getByRole("combobox", { name: /Priority/ }), "high");
+  await user.type(screen.getByPlaceholderText("e.g. bug, urgent"), "bug, frontend");
+  // Fill due date via native input
+  fireEvent.change(screen.getByLabelText(/Due date/), { target: { value: "2026-12-25" } });
+  await user.click(screen.getByRole("button", { name: "Add card" }));
+  // Card should be saved with metadata
+  const saved = server.read();
+  const newCard = saved.board.columns[0].cards[saved.board.columns[0].cards.length - 1];
+  expect(newCard.title).toBe("Important task");
+  expect(newCard.priority).toBe("high");
+  expect(newCard.labels).toEqual(["bug", "frontend"]);
+  expect(newCard.due_date).toBe("2026-12-25");
+  // Visual indicators should be present
+  expect(screen.getByText("high")).toBeInTheDocument();
+  expect(screen.getByText("bug")).toBeInTheDocument();
+  expect(screen.getByText("frontend")).toBeInTheDocument();
+  expect(screen.getByText("2026-12-25")).toBeInTheDocument();
+});
+
+it("edits card metadata and preserves other fields", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  await screen.findByRole("button", { name: "Edit A warmer welcome" });
+  // First add a card with metadata to edit later
+  await user.click(screen.getByRole("button", { name: "New card in To do" }));
+  await user.type(screen.getByLabelText("Title"), "Meta card");
+  await user.selectOptions(screen.getByRole("combobox", { name: /Priority/ }), "medium");
+  await user.type(screen.getByPlaceholderText("e.g. bug, urgent"), "design");
+  await user.click(screen.getByRole("button", { name: "Add card" }));
+  await waitFor(() => expect(screen.getByText("medium")).toBeInTheDocument());
+  // Now edit the card
+  await user.click(screen.getByRole("button", { name: "Edit Meta card" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: /Priority/ }), "low");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(screen.getByText("low")).toBeInTheDocument());
+  expect(screen.queryByText("medium")).not.toBeInTheDocument();
+  expect(screen.getByText("design")).toBeInTheDocument();
+});
+
+it("shows overdue styling for past due dates", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  await user.click(await screen.findByRole("button", { name: "New card in Ideas" }));
+  await user.type(screen.getByLabelText("Title"), "Overdue task");
+  fireEvent.change(screen.getByLabelText(/Due date/), { target: { value: "2024-01-01" } });
+  await user.click(screen.getByRole("button", { name: "Add card" }));
+  const dueElement = await screen.findByText("2024-01-01");
+  expect(dueElement.className).toContain("overdue");
+});
+
+it("shows due-today styling for today's date", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  await user.click(await screen.findByRole("button", { name: "New card in To do" }));
+  await user.type(screen.getByLabelText("Title"), "Today task");
+  const today = new Date().toISOString().split("T")[0];
+  fireEvent.change(screen.getByLabelText(/Due date/), { target: { value: today } });
+  await user.click(screen.getByRole("button", { name: "Add card" }));
+  const dueElement = await screen.findByText(today);
+  expect(dueElement.className).toContain("due-today");
+});
+
+it("filters cards by search text", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  await screen.findByRole("button", { name: "Rename Ideas" });
+  expect(screen.getAllByRole("article")).toHaveLength(10);
+  // Open filter
+  await user.click(screen.getByRole("button", { name: "Filter cards" }));
+  await user.type(screen.getByLabelText("Search cards"), "warmer welcome");
+  // Only the matching card should show
+  expect(screen.getAllByRole("article")).toHaveLength(1);
+  expect(screen.getByRole("heading", { name: "A warmer welcome" })).toBeInTheDocument();
+  // Clear filter
+  await user.click(screen.getByRole("button", { name: /Clear filters/ }));
+  expect(screen.getAllByRole("article")).toHaveLength(10);
+});
+
+it("filters cards by priority", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  // Add a high priority card first
+  await user.click(await screen.findByRole("button", { name: "New card in Ideas" }));
+  await user.type(screen.getByLabelText("Title"), "Urgent item");
+  await user.selectOptions(screen.getByRole("combobox", { name: /Priority/ }), "high");
+  await user.click(screen.getByRole("button", { name: "Add card" }));
+  await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(11));
+  // Open filter and select high priority
+  await user.click(screen.getByRole("button", { name: "Filter cards" }));
+  await user.selectOptions(screen.getByLabelText("Filter by priority"), "high");
+  expect(screen.getAllByRole("article")).toHaveLength(1);
+  expect(screen.getByRole("heading", { name: "Urgent item" })).toBeInTheDocument();
+});
+
+it("adds a card with no metadata fields (defaults)", async () => {
+  const user = userEvent.setup({ delay: null }); render(<Home />);
+  await user.click(await screen.findByRole("button", { name: "New card in Ideas" }));
+  await user.type(screen.getByLabelText("Title"), "Simple card");
+  await user.click(screen.getByRole("button", { name: "Add card" }));
+  const saved = server.read();
+  const newCard = saved.board.columns[0].cards[saved.board.columns[0].cards.length - 1];
+  expect(newCard.title).toBe("Simple card");
+  expect(newCard.priority).toBe("none");
+  expect(newCard.labels).toEqual([]);
+  expect(newCard.due_date).toBeNull();
+});
