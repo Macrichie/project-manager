@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => {
 
 test("boards list shows default board and allows navigation to it", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /Your boards/ })).toBeVisible();
-  const boardCard = page.getByText("My Board").first();
+  const boardCard = page.getByRole("heading", { name: "My Board" }).first();
   await expect(boardCard).toBeVisible();
   await boardCard.click();
   await expect(page.getByRole("region")).toHaveCount(5);
@@ -22,14 +22,14 @@ test("create a new board and navigate to it", async ({ page }) => {
   await page.getByRole("button", { name: "Create new board" }).click();
   await page.getByPlaceholder("e.g. Sprint 1").fill("Test Board");
   await page.getByRole("button", { name: /Create board/ }).click();
-  await expect(page.getByText("Test Board")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Test Board" })).toBeVisible();
   // Navigate to the new board
-  await page.getByText("Test Board").click();
+  await page.getByRole("heading", { name: "Test Board" }).click();
   await expect(page.getByRole("region")).toHaveCount(5);
   // Clean up: go back and delete
   await page.getByRole("button", { name: "Back to boards" }).click();
-  await page.getByRole("button", { name: "Delete Test Board" }).click();
-  await expect(page.getByText("Test Board")).toHaveCount(0);
+  await page.getByRole("button", { name: "Delete Test Board", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Test Board" })).toHaveCount(0);
 });
 
 test("rename a board from the boards list", async ({ page }) => {
@@ -37,12 +37,13 @@ test("rename a board from the boards list", async ({ page }) => {
   await page.getByRole("button", { name: "Create new board" }).click();
   await page.getByPlaceholder("e.g. Sprint 1").fill("Rename Me");
   await page.getByRole("button", { name: /Create board/ }).click();
-  await expect(page.getByText("Rename Me")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Rename Me" })).toBeVisible();
   // Rename it
-  await page.getByRole("button", { name: "Rename Rename Me" }).click();
-  await page.getByRole("textbox", { name: "name" }).fill("Renamed Board");
-  await page.getByRole("button", { name: "Save name" }).click();
-  await expect(page.getByText("Renamed Board")).toBeVisible();
+  await page.getByRole("button", { name: "Rename Rename Me", exact: true }).click();
+  const renameInput = page.locator(".board-rename-form input[name='name']");
+  await renameInput.fill("Renamed Board");
+  await page.getByRole("button", { name: "Save name", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Renamed Board" })).toBeVisible();
   // Clean up
-  await page.getByRole("button", { name: "Delete Renamed Board" }).click();
+  await page.getByRole("button", { name: "Delete Renamed Board", exact: true }).click();
 });

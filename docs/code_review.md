@@ -1,294 +1,244 @@
-# Code Review — Forma Kanban App
+# Code review — Forma Kanban app
 
-Comprehensive review of the full repository. Findings are grouped by area and ranked
-Critical > High > Medium > Low. Each item cites the relevant file and line.
+Full review of the repository as of 2026-11-14, at commit `42a0a40` ("remediate code
+review findings and refactor backend modules"). This report replaces the previous
+review (added in that commit), whose Critical/High/Medium findings drove the
+remediation. This review therefore evaluates the remediated state and flags what the
+remediation itself left inconsistent.
+
+Method: every hand-written source file was read end to end (backend modules and tests,
+frontend app and tests, Docker/compose/scripts, docs, and the remediation commit
+diff). The default suites were re-run; see Verification.
 
 ---
 
-## Executive Summary
+## Verification performed for this review
 
-The codebase is well-structured, secure against the common web vulnerabilities (SQL
-injection, XSS), and backed by a thorough test suite (116 backend, 37 frontend unit,
-27+ E2E). Pydantic strict mode with `extra="forbid"`, parameterised SQL, React's
-default escaping, `SameSite=Strict` / `HttpOnly` cookies, and revision-based
-optimistic concurrency are all solid choices.
+| Check | Result |
+| --- | --- |
+| `cd backend && uv run --locked pytest -q -W error` | 121 passed in 9.70s |
+| `cd frontend && npm test` | 44 passed (5 files) in 15.44s |
+| `npm run lint` / `npm run typecheck` | Pass, no output |
+| e2e suites, Docker build, live provider checks | Not re-run here (need a running container/provider); prior results recorded in VERIFICATION.md |
 
-The main areas for improvement are hardening the Docker image (non-root user), adding
-UX safeguards (delete confirmation), improving accessibility announcements for
-drag-and-drop, and tightening a few correctness edge cases.
+Not covered statically: no browser run of the restart e2e (see H-1; the mismatch is
+established from code and history and should be confirmed by a re-run).
+
+---
+
+## Executive summary
+
+The codebase is in strong shape: strict validation everywhere, ownership always
+derived from the session, parameterized SQL only, revision-checked atomic saves with
+a sound single-writer argument, a well-coordinated frontend save/chat lock, and an
+unusually disciplined test suite (121 backend / 44 frontend unit tests pass in about
+25 seconds combined). The remediation commit demonstrably fixed the prior review's
+findings (non-root container, rate limiting, constant-time comparison, Origin check,
+env credentials, payload size limits, delete confirmation, custom announcements,
+module refactor).
+
+The remaining work is almost entirely reconciliation: the remediation changed two
+behaviors (sessions now persist in SQLite; DnD announcements are custom) but did not
+update `e2e/restart.spec.ts`, three working documents still describe the old session
+semantics, the newly added payload size caps contradict the approved "no arbitrary
+length caps" contract, and the new `FORMA_USERNAME`/`FORMA_PASSWORD` override does not
+work end to end.
 
 | Severity | Count |
-|----------|-------|
-| Critical | 1     |
-| High     | 2     |
-| Medium   | 14    |
-| Low      | 25    |
+| --- | --- |
+| High | 2 |
+| Medium | 2 |
+| Low | 7 |
+| Nit | 5 |
 
 ---
 
-## 1 — Security
+## High
 
-### [Critical] SEC-1: Hardcoded credentials with no override mechanism
-`backend/app/auth.py:49` — Username `user` and password `password` are string
-literals. There is no environment-variable or config-file override. Anyone who reads
-the source knows the login. Acceptable only as a demo; a production deployment must
-source credentials externally.
+### H-1: `e2e/restart.spec.ts` now contradicts two remediated behaviors
 
-### [High] SEC-2: Container runs as root
-`Dockerfile` — The final stage never creates or switches to a non-root user. A
-container-escape or application vulnerability grants root access.
-**Fix:** Add `RUN adduser --disabled-password --no-create-home appuser && chown -R appuser /app /data`
-and `USER appuser` before `CMD`.
+The remediation changed session storage and drag announcements, but this opt-in test —
+the only automated browser check of restart persistence — was not updated. It cannot
+pass as written:
 
-### [High] SEC-3: In-memory sessions with no persistence or sharing
-`backend/app/main.py:36` — Sessions live in a plain `dict`. A restart logs everyone
-out; multi-worker deployments (`--workers N`) would not share sessions. Documented as
-a known constraint but limits any path to production.
+1. `frontend/e2e/restart.spec.ts:46-48` expects the sign-in screen after
+   `docker restart` and re-authenticates. Sessions are now SQLite-backed and survive
+   restart (`backend/app/database.py:21-25` and `:117-140`;
+   `backend/tests/test_auth.py:100-113` passes), and README.md:5 / CLAUDE.md:77
+   document that. With a valid cookie still in the browser, the board will render and
+   the `Username` assertion will time out.
+2. `frontend/e2e/restart.spec.ts:25` still asserts the default dnd-kit announcement
+   text `over droppable area c2`. `frontend/app/board-view.tsx:113-118` now supplies
+   custom announcements (`Card "..." over {column name}`), and the same commit already
+   loosened the identical assertion in `frontend/e2e/board.spec.ts:30` to `/over /i`
+   for exactly this reason. The restart assertion was missed.
 
-### [Medium] SEC-4: No password hashing
-`backend/app/auth.py:49` — Plaintext comparison. Even for one hardcoded user, any
-future migration to stored credentials requires a full rewrite.
+**Action:** update restart.spec.ts to expect the restored session/board after restart
+(or to sign out first if a signed-out restart scenario is wanted) and to expect the
+custom announcement text; then re-run the explicit restart check against an isolated
+container so VERIFICATION.md reflects the new behavior.
 
-### [Medium] SEC-5: CSRF protection relies on `Sec-Fetch-Site` header only
-`backend/app/main.py:58-61` — Non-browser clients and older browsers that omit
-`Sec-Fetch-Site` bypass the check. Combined with `SameSite=Strict` cookies this is
-reasonable, but a dedicated CSRF token would add defence-in-depth.
+### H-2: Payload size caps silently contradict the approved contract
 
-### [Medium] SEC-6: No rate limiting on login
-`backend/app/auth.py:47-63` — No rate limit, lockout, or backoff. With known
-credentials this is low-risk, but any credential upgrade would need this.
+The remediation added size limits (`backend/app/models.py:14-26`: card id <= 100,
+title <= 5000, details <= 50000, column name <= 200, at most 100 cards per column)
+with a supporting test (`backend/tests/test_board.py:243-253`). But the approved
+documents say the opposite and were not updated:
 
-### [Low] SEC-7: Expired sessions never garbage-collected
-`backend/app/auth.py:37-38` — Stale entries are cleaned only on access. A
-long-running server accumulates dead sessions indefinitely.
+- `docs/DATABASE.md:47`: "Add no arbitrary title/detail length limit; the existing
+  long-title behavior must continue to work."
+- `docs/PLAN.md:36`: "...without server trimming or arbitrary length caps."
 
-### [Low] SEC-8: Cookie `Secure` flag depends on request scheme
-`backend/app/auth.py:61` — Behind a TLS-terminating proxy without `X-Forwarded-Proto`
-the flag would be `false`, sending the cookie over cleartext.
+User-visible consequences: a legitimate board past any cap now returns 422 and cannot
+be saved, and AI full-board replies that exceed a cap fail validation and return 502
+"AI returned invalid board data" (`backend/app/chat.py:71-75`) — the system prompt
+does not tell the model about the caps. The change was deliberate (commit message:
+"board payload size limits"), but it is an unrecorded contract change.
 
-### [Low] SEC-9: API key read from environment on every request
-`backend/app/openrouter.py:33` — Minor: reading once at startup and storing in app
-state would reduce the exposure window.
-
-### [Low] SEC-10: No Content Security Policy headers
-`frontend/next.config.ts` — No CSP configured. The static export serves no custom
-headers; the FastAPI backend would need to add them.
-
-### [Low] SEC-11: No CSRF token on frontend requests
-`frontend/app/auth.tsx:69`, `frontend/app/use-board.ts:13-18` — All mutating requests
-rely solely on `SameSite=Strict` cookies. Adequate for modern browsers.
+**Action:** pick one truth. Either revert the caps to restore the approved behavior,
+or keep them and record the decision (limits, rationale, effect on AI replies) in
+DATABASE.md and PLAN.md.
 
 ---
 
-## 2 — Correctness
+## Medium
 
-### [Medium] COR-1: Shadow import — `HTTPException` from `http.client`
-`backend/app/openrouter.py:3` — Imports `http.client.HTTPException`, which shadows
-`fastapi.HTTPException` by name. Correct in this context (catching stdlib HTTP errors
-from `urlopen`) but a maintenance trap if someone adds the FastAPI import later.
-**Fix:** Alias the import: `from http.client import HTTPException as StdlibHTTPException`.
+### M-1: Session-persistence documentation drift (security posture statement)
 
-### [Medium] COR-2: TOCTOU race in `save_board`
-`backend/app/database.py:93-105` — After `UPDATE ... WHERE revision = ?` returns
-`rowcount == 0`, a `SELECT` distinguishes "not found" from "conflict". Another thread
-could delete the board between the two statements. Benign in practice (boards are
-never deleted) but theoretically racy.
+Implementation: sessions live in the SQLite `sessions` table and survive restart;
+only expired rows are cleaned at startup (`backend/app/main.py:32`,
+`backend/app/database.py:117-140`). Three working documents still describe the old
+in-memory design:
 
-### [Medium] COR-3: `moveCard` intra-column index semantics
-`frontend/app/board.ts:25-31` — When moving a card to a higher index within the same
-column, the card is filtered out first, shifting indices. `targetIndex` then means
-different things for intra- vs inter-column moves. The DnD handler compensates, but
-reusing `moveCard` with a different caller convention could misplace cards.
+- `docs/PLAN.md:33`: "eight-hour server-memory sessions. Logout/restart revokes
+  sessions..."
+- `docs/DATABASE.md:60`: "Keep authentication sessions in memory. Restarting the
+  server requires signing in again..."
+- `backend/AGENTS.md`: "sessions stay in `app.state.sessions` ... revoked on logout
+  or server restart."
 
-### [Medium] COR-4: Stale `messages` closure in `sendMessage`
-`frontend/app/use-board.ts:105-142` — `sendMessage` captures `messages` from the
-render closure. The `writing.current` mutex prevents concurrent sends, but if the
-guard were ever relaxed, messages could be lost. The mutex is also never reset if the
-component unmounts mid-flight.
+README.md and CLAUDE.md already describe the implemented behavior. This is more than
+cosmetic: whether a stolen token survives a container restart is a security property,
+and the documents disagree.
 
-### [Medium] COR-5: `save` compares columns by reference identity
-`frontend/app/use-board.ts:66` — `columns === current.current.board.columns` is a
-reference check. After conflict recovery the local `columns` array will never be `===`
-to the recovered document's columns, causing a redundant PUT.
+**Action:** update the three documents to the SQLite-backed semantics (or revert the
+code if restart-revocation was the intended posture — but then H-1, README, and
+CLAUDE.md must flip back too; choose one truth and make everything match).
 
-### [Medium] COR-6: `.env.example` uses non-standard format
-`.env.example:2` — Contains `OPENROUTER_API_KEY` with no `=` sign. Most `.env`
-parsers expect `KEY=value`. Copying this file to `.env` leaves the variable undefined.
-**Fix:** Change to `OPENROUTER_API_KEY=`.
+### M-2: `FORMA_USERNAME`/`FORMA_PASSWORD` override is documented but broken
 
-### [Low] COR-7: `ensure_user_board` reads seed from disk on every call
-`backend/app/database.py:55` — `seed.json` is parsed on each call. Caching the parsed
-result would avoid repeated I/O.
+README.md:5 and CLAUDE.md advertise the credential override. However
+`Database.initialize()` always seeds only the hardcoded username `user`
+(`backend/app/database.py:57`), so with `FORMA_USERNAME=admin` a correct login finds
+no user row and returns 500 "Sign-in data is unavailable" (`backend/app/auth.py:91-93`).
+The test only passes because it seeds the user manually
+(`backend/tests/test_auth.py:85`).
 
-### [Low] COR-8: New connection opened per database operation
-`backend/app/database.py:41-46` — No connection pooling or reuse. Fine for low
-traffic but each request may open 1-3 connections.
-
-### [Low] COR-9: `protect_browser_requests` uses fragile path matching
-`backend/app/main.py:64` — Routes that need `Cache-Control: no-store` are listed by
-string prefix. New API routes require manual updates. Applying `no-store` to all
-`/api/` responses would be simpler.
-
-### [Low] COR-10: `unknown_api` iterates all routes on every 404/405
-`backend/app/main.py:86-97` — Loops over all registered routes to compute the `Allow`
-header. Unnecessary work on every unmatched request.
-
-### [Low] COR-11: `board[4]?.cards.length` hardcodes "done" index
-`frontend/app/board-view.tsx:123` — A lookup by `column.id === "done"` would be more
-robust than a magic index.
-
-### [Low] COR-12: `controller.current!` non-null assertion
-`frontend/app/use-board.ts:40,67,107` — Asserted non-null but starts as `null`.
-Guards prevent early access in practice.
+**Action:** in `initialize()`, seed the configured username (read
+`FORMA_USERNAME` there too), or drop the override from README/CLAUDE.md and the code
+to keep the MVP simple.
 
 ---
 
-## 3 — Infrastructure & Docker
+## Low
 
-### [Medium] INF-1: No `restart` policy in compose.yaml
-`compose.yaml` — If the container crashes it stays down.
-**Fix:** Add `restart: unless-stopped`.
+1. **Login rate-limit state grows unboundedly** — `backend/app/auth.py:59-77` with
+   `app.state.login_attempts` (`backend/app/main.py:37`): entries are keyed by client
+   IP and pruned only when the same IP retries; successful logins never clear them.
+   A scanner can grow the dict without bound. Localhost exposure is low; add a
+   periodic sweep or cap entries.
+2. **Expired sessions are purged only at startup or on access**
+   (`backend/app/database.py:138-140`): rows for tokens never presented again
+   accumulate between restarts. Acceptable for the MVP; worth a note or a periodic
+   sweep.
+3. **Login rotation order can log a user out on storage failure** —
+   `backend/app/auth.py:94-97` deletes the old session before creating the new one;
+   if creation fails, the current session is already revoked. Create the new session
+   first, then delete the old.
+4. **OpenRouter inline error mapping handles only integer codes** —
+   `backend/app/openrouter.py:73-76`; string codes (e.g. `insufficient_credits`)
+   collapse to the generic 502 message instead of the tailored 503s.
+5. **Storage-error wording is board-specific** — `backend/app/errors.py:20-23`
+   returns "Board storage is unavailable" for any `sqlite3.Error`, including
+   auth/session operations. Use a storage-agnostic detail.
+6. **`.claude/settings.local.json` is tracked in git** — a personal tool-permissions
+   file that is conventionally gitignored. Untrack it and add it to `.gitignore`.
+   Related working-tree state to resolve deliberately: an unstaged deletion of
+   `docs/code_review.md` (this file replaces it) and a modified
+   `.claude/settings.local.json`.
+7. **Stale verification counts in agent-facing docs** — VERIFICATION.md:13-23,
+   PLAN.md:23-265, and backend/AGENTS.md still say 116 backend / 37 frontend tests;
+   measured today: 121 and 44. Historical dated entries are fine, but PLAN.md's
+   "Current status" and backend/AGENTS.md are what agents read. Refresh after the
+   next full verification run (including the fixed restart e2e).
 
-### [Medium] INF-2: uv binary left in final Docker image
-`Dockerfile:12` — `/uv` and `/uvx` (~30 MB) are only needed during `uv sync` but
-remain in the final image.
-**Fix:** Remove after sync or use a three-stage build.
-
-### [Medium] INF-3: No backup mechanism for board data
-`compose.yaml:23-24` — The `board-data` volume is the only persistence layer.
-`docker compose down -v` permanently deletes all data with no documented recovery.
-
-### [Medium] INF-4: Playwright `fullyParallel: true` with `workers: 1`
-`frontend/playwright.config.ts:8-9` — These contradict each other; net effect is
-serial execution. Remove `fullyParallel` or increase workers to match intent.
-
-### [Low] INF-5: Frontend build stage uses floating `node:26-slim`
-`Dockerfile:1` — Different patch versions could produce different outputs. Pin to a
-specific version for reproducibility.
-
-### [Low] INF-6: Cloudflare DNS hardcoded
-`compose.yaml:8-10` — Overrides system DNS; may conflict with corporate policies.
-
-### [Low] INF-7: Scaffold Playwright config lacks explicit timeouts
-`frontend/playwright.scaffold.config.ts` — Relies on Playwright defaults. Explicit
-timeouts would prevent flaky CI.
-
-### [Low] INF-8: Vitest timeout is 20 seconds
-`frontend/vitest.config.mts:2` — Generous for unit tests; may mask slow tests.
-
-### [Low] INF-9: E2E fixtures import from outside `frontend/`
-`frontend/e2e/fixtures.ts:2` — Imports `../../docs/board.example.json`. A missing or
-changed file gives an opaque import error.
+Also noted: `frontend/package.json:28` pins `@types/node` to `^20` while the
+build/runtime is Node 26; align the major.
 
 ---
 
-## 4 — Code Quality
+## Nit
 
-### [Low] QUA-1: `/hello` and `/api/hello` appear to be leftover scaffolding
-`backend/app/main.py:75-80` — Serve no functional purpose. Tested but add unnecessary
-surface area.
-
-### [Low] QUA-2: `User` model shape defined in two places
-`backend/app/auth.py:18-20` and `backend/app/database.py:61-63` — The user dict shape
-is implicit in the database layer and explicit in the Pydantic model. Minor DRY
-concern.
-
-### [Low] QUA-3: `CardForm` trims `title` but not `details`
-`frontend/app/board-view.tsx:33` — Likely intentional (preserve formatting) but
-inconsistent.
-
-### [Low] QUA-4: `onDelete` is fire-and-forget; other actions await
-`frontend/app/board-view.tsx:128` — Uses `void save(...)` while `onAdd`, `onEdit`,
-`onRename` are awaited. Intentional (no form to hold open) but inconsistent.
-
-### [Low] QUA-5: Very long single-expression JSX lines
-`frontend/app/board-view.tsx:128-129` — Several lines exceed 300 characters, making
-review difficult.
+1. `frontend/app/board-view.tsx:131` derives the Done count from `board[4]` by index
+   instead of the fixed column id; safe under server validation but implicit. Prefer
+   `board.find(c => c.id === "done")`.
+2. `backend/app/health.py:14-18` keeps the scaffolding `/api/hello` endpoint. Under
+   the "no extra features" standard it is a candidate for removal (removal touches
+   README, backend tests, and the scaffold e2e spec).
+3. `frontend/app/use-board.ts:133-138` appends its own "Reload the board..." guidance
+   to the server's 409 detail, which already says "Reload it before saving again" —
+   one message, two reload instructions.
+4. `CLAUDE.md:32` says "Single-stage build"; the Dockerfile is two-stage (Node 26
+   build stage + Python 3.14 runtime stage).
+5. Chat history is sent unbounded (`frontend/app/use-board.ts:118`); long sessions
+   balloon provider requests. The plan does not require truncation; a soft cap is a
+   reasonable future tweak.
 
 ---
 
-## 5 — Performance
+## What is solid (leave alone)
 
-### [Low] PERF-1: AI chat endpoint blocks a threadpool thread for up to 45 s
-`backend/app/chat.py:88`, `backend/app/openrouter.py:54` — Sync endpoint calling
-`urlopen` with a 45-second timeout. Each pending request holds a threadpool thread.
-Under load this could exhaust the default pool (40 threads).
-
-### [Low] PERF-2: Board serialised twice per chat request
-`backend/app/chat.py:61-62` — `model_dump()` + `json.dumps()` when the raw JSON
-string is already stored in the database. Minor at this scale.
-
-### [Low] PERF-3: `keyboardCoordinates` recreated on every render
-`frontend/app/board-view.tsx:93-110` — A plain function capturing `board`. Wrapping in
-`useCallback([board])` would be more idiomatic.
-
----
-
-## 6 — Accessibility
-
-### [Medium] A11Y-1: No delete confirmation
-`frontend/app/board-view.tsx:128` — `onDelete` fires immediately with no confirmation.
-A misclick permanently removes a card and there is no undo.
-
-### [Medium] A11Y-2: Drag-and-drop uses generic screen-reader announcements
-`frontend/app/board-view.tsx:128` — `DndContext` does not provide custom
-`announcements`. Users hear IDs like "over droppable area c4" instead of card titles
-and column names.
-
-### [Low] A11Y-3: No `aria-roledescription` on sortable cards
-`frontend/app/board-view.tsx:52-59` — Screen readers get the generic "article" role
-instead of "card".
-
-### [Low] A11Y-4: Focus not moved to error banners
-`frontend/app/board-view.tsx:127` — Board errors appear without programmatic focus.
-Screen-reader users may miss them.
-
-### [Low] A11Y-5: No `aria-busy` on board during save/load
-`frontend/app/board-view.tsx` — The sign-in form has `aria-busy`; the board area does
-not. The footer live region partially compensates.
+- **Validation and ownership**: strict Pydantic models with `extra="forbid"`
+  (`backend/app/models.py:11`), fixed column order and unique card IDs enforced in
+  one place, ownership always from `session.user.id`, no client-supplied identity
+  accepted anywhere.
+- **Concurrency core**: revision-checked atomic UPDATE with a correct lock argument
+  (`backend/app/database.py:97-113`), plus a concurrent-writers test
+  (`backend/tests/test_board.py:164-184`); frontend serializes chat and manual saves
+  behind one lock and refetches after any failure without auto-resubmit
+  (`frontend/app/use-board.ts`); stale AI candidates return 409 before any success
+  reply (`backend/app/chat.py:78-83`).
+- **Auth posture**: opaque 32-byte tokens, HttpOnly SameSite=Strict cookie scoped to
+  `/api`, rotation on login, cross-site write rejection via fetch metadata plus an
+  Origin check, `no-store` on private responses, constant-time credential
+  comparison, rate limiting on failed logins.
+- **Secrets and packaging**: API key read at call time only, never logged or sent to
+  the client; non-root single-process container; `.dockerignore` whitelist approach;
+  port bound to 127.0.0.1; uv/lockfile-pinned builds.
+- **Tests**: meaningful boundaries (auth, ownership isolation, stale writes, storage
+  rollback, AI candidate validation, oversized payloads, chat/manual serialization),
+  no provider mocks by explicit decision, live checks isolated and opt-in.
+- **Hygiene**: 81 tracked files with no build/test artifacts; no `console.log`,
+  TODO/FIXME, emojis, `any`, or ts-ignore anywhere in source or docs.
 
 ---
 
-## 7 — Testing Gaps
+## Consolidated actions
 
-### [Medium] TEST-1: No unit tests for `useBoard` hook in isolation
-`frontend/tests/` — The hook is tested only through the full `ProjectBoard` component.
-Edge cases (abort signals, the `writing.current` mutex, recovery) would be easier to
-test via `renderHook`.
-
-### [Medium] TEST-2: No unit test for successful chat response
-`frontend/tests/page.test.tsx` — Only the chat failure path is tested (line 203). No
-mock of a successful `/api/chat` response that verifies message appending.
-
-### [Medium] TEST-3: No test for maximum board/payload size
-`backend/tests/` — No tests for boards with hundreds of cards or multi-megabyte
-details. A malicious user could submit oversized payloads.
-
-### [Low] TEST-4: `provider_error` mapping not directly unit-tested
-`backend/app/openrouter.py:20-29` — The mapping is covered indirectly by chat tests
-but has no dedicated assertions.
-
-### [Low] TEST-5: Mock API resolves synchronously
-`frontend/tests/board-api.ts` — Default responses are instant, so tests never see the
-`pending` UI state for more than a microtask.
-
-### [Low] TEST-6: No test for session expiry timer cleanup
-`frontend/app/auth.tsx:38-39` — The `setTimeout` cleanup on unmount is not explicitly
-tested.
-
----
-
-## Recommended Actions (priority order)
-
-1. **SEC-1 / SEC-2:** Add a non-root user to the Dockerfile and plan a credential
-   override mechanism (env vars or secrets file).
-2. **A11Y-1:** Add a confirmation step before card deletion.
-3. **COR-1:** Alias the `http.client.HTTPException` import to avoid shadowing.
-4. **COR-6:** Fix `.env.example` to use `KEY=value` format.
-5. **INF-1:** Add `restart: unless-stopped` to compose.yaml.
-6. **A11Y-2:** Provide custom drag-and-drop screen-reader announcements.
-7. **TEST-1 / TEST-2:** Add isolated `useBoard` hook tests and a chat success-path
-   unit test.
-8. **TEST-3:** Add a backend test for oversized board payloads.
-9. **INF-2:** Remove uv binary from the final Docker image.
-10. **COR-5:** Use structural equality for the save no-op check.
+1. Fix `e2e/restart.spec.ts` (post-restart session expectation and announcement
+   text) and re-run the explicit restart check. — H-1
+2. Reconcile the payload size caps with the approved no-caps contract and record the
+   decision in DATABASE.md and PLAN.md. — H-2
+3. Update PLAN.md:33, DATABASE.md:60, and backend/AGENTS.md to the SQLite-backed
+   session semantics (or revert the code — pick one truth). — M-1
+4. Make `FORMA_USERNAME`/`FORMA_PASSWORD` work end to end (seed the configured
+   username) or remove the override from code and docs. — M-2
+5. Prune/cap the login-attempt map; consider a periodic expired-session sweep. — Low 1-2
+6. Create the replacement session before deleting the old one at login. — Low 3
+7. Map OpenRouter string error codes; make the storage-error detail agnostic. — Low 4-5
+8. Untrack `.claude/settings.local.json`; resolve the uncommitted
+   deletion/modification in the working tree. — Low 6
+9. Align `@types/node` major; refresh stale test counts in PLAN.md status, and
+   backend/AGENTS.md after the next full run. — Low 7
+10. Optional cleanups from the Nit list (Done-by-id, `/api/hello` removal, duplicated
+    reload wording, CLAUDE.md build-stage wording, chat history cap). — Nit 1-5

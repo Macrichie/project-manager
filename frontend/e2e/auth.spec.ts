@@ -18,10 +18,14 @@ test("sign-in validation, session refresh, logout, and saved board state", async
   await expect(page.getByRole("region", { name: "Sign in", exact: true }).getByRole("alert")).toContainText("Incorrect username or password");
   await page.getByLabel("Password").fill("password");
   await page.getByLabel("Password").press("Enter");
-  await expect(page.getByRole("article")).toHaveCount(10);
+  // After login, boards list is shown
+  await expect(page.getByRole("heading", { name: /Your boards/ })).toBeVisible();
   const cookie = (await context.cookies()).find(cookie => cookie.name === "forma_session")!;
   expect(cookie.httpOnly).toBe(true); expect(cookie.sameSite).toBe("Strict"); expect(cookie.path).toBe("/api");
   expect(await page.evaluate(() => document.cookie)).not.toContain("forma_session");
+  // Navigate to board
+  await page.getByText("My Board").first().click();
+  await expect(page.getByRole("article")).toHaveCount(10);
   await page.reload();
   await expect(page.getByRole("article")).toHaveCount(10);
   await page.getByRole("button", { name: "Rename Ideas" }).click();
@@ -35,6 +39,11 @@ test("sign-in validation, session refresh, logout, and saved board state", async
   expect((await request.get("/api/auth/me", { headers: { cookie: `forma_session=${cookie.value}` } })).status()).toBe(401);
   await page.getByLabel("Username").fill("user"); await page.getByLabel("Password").fill("password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  // Hash may persist from before sign-out, routing directly to board or boards list
+  await expect(page.getByRole("button", { name: "Rename Unsaved draft" }).or(page.getByRole("heading", { name: /Your boards/ }))).toBeVisible();
+  if (await page.getByRole("heading", { name: /Your boards/ }).isVisible()) {
+    await page.getByText("My Board").first().click();
+  }
   await expect(page.getByRole("button", { name: "Rename Unsaved draft" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Unsaved draft" })).toHaveCount(1);
   expect(errors).toEqual([]);
@@ -43,6 +52,8 @@ test("sign-in validation, session refresh, logout, and saved board state", async
 test("losing a server session hides the board on returning to the page", async ({ page }) => {
   expect((await page.request.post("/api/auth/login", { data: { username: "user", password: "password" } })).status()).toBe(200);
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: /Your boards/ })).toBeVisible();
+  await page.getByText("My Board").first().click();
   await expect(page.getByRole("article")).toHaveCount(10);
   expect((await page.request.post("/api/auth/logout")).status()).toBe(204);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));

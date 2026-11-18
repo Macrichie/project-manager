@@ -16,6 +16,12 @@ export const test = base.extend<{ boardData: void; autoAcceptDialogs: void }>({
       await request.post("/api/auth/login", { data: { username: "user", password: "password" } });
       const current = await (await request.get("/api/board")).json();
       expect((await request.put("/api/board", { data: { revision: current.revision, board: original.board } })).status()).toBe(200);
+      // Clean up extra boards created during test (for the default user)
+      const boards: { id: number }[] = await (await request.get("/api/boards")).json();
+      for (const board of boards) {
+        if (board.id !== 1) await request.delete(`/api/boards/${board.id}`);
+      }
+      // Note: extra users created by registration tests are cleaned up per-test
     }
   }, { auto: true }],
 });

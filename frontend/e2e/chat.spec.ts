@@ -4,6 +4,8 @@ import { test, expect } from "./fixtures";
 async function openBoard(page: Page) {
   await page.request.post("/api/auth/login", { data: { username: "user", password: "password" } });
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: /Your boards/ })).toBeVisible();
+  await page.getByText("My Board").first().click();
   await expect(page.getByRole("region")).toHaveCount(5);
   await page.getByRole("button", { name: "AI assistant", exact: true }).click();
   await expect(page.getByLabel("Message your assistant")).toBeFocused();
@@ -12,7 +14,7 @@ async function openBoard(page: Page) {
 async function send(page: Page, message: string) {
   const before = await (await page.request.get("/api/board")).json();
   await page.getByLabel("Message your assistant").fill(message);
-  const response = page.waitForResponse(response => response.url().endsWith("/api/chat") && response.request().method() === "POST");
+  const response = page.waitForResponse(response => response.url().includes("/api/boards/") && response.url().endsWith("/chat") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   let result = await response;
   // A real model can violate application invariants. Verify the refusal and then
@@ -21,7 +23,7 @@ async function send(page: Page, message: string) {
     await expect(page.getByRole("complementary", { name: "AI assistant" }).getByRole("alert")).toContainText("No changes were saved");
     await expect(page.getByLabel("Message your assistant")).toHaveValue(message);
     expect(await (await page.request.get("/api/board")).json()).toEqual(before);
-    const retry = page.waitForResponse(response => response.url().endsWith("/api/chat") && response.request().method() === "POST");
+    const retry = page.waitForResponse(response => response.url().includes("/api/boards/") && response.url().endsWith("/chat") && response.request().method() === "POST");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     result = await retry;
   }
@@ -97,7 +99,7 @@ test("live chat and manual saves share a lock and stale results show an error", 
   release(); await expect(page.getByRole("button", { name: "Rename Manual before chat", exact: true })).toBeVisible();
   await page.unroute("**/api/board");
   let finished = false;
-  const response = page.waitForResponse(response => response.url().endsWith("/api/chat") && response.request().method() === "POST").then(response => { finished = true; return response; });
+  const response = page.waitForResponse(response => response.url().includes("/api/boards/") && response.url().endsWith("/chat") && response.request().method() === "POST").then(response => { finished = true; return response; });
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(page.getByRole("button", { name: "Delete A warmer welcome", exact: true })).toBeDisabled();
   let writes = 0;
@@ -118,7 +120,7 @@ test("live chat and manual saves share a lock and stale results show an error", 
 
 test("a blocked network request keeps the draft and permits manual work after recovery", async ({ page }) => {
   await openBoard(page);
-  await page.route("**/api/chat", route => route.abort("internetdisconnected"));
+  await page.route("**/api/boards/*/chat", route => route.abort("internetdisconnected"));
   await page.getByLabel("Message your assistant").fill("Keep this unsent draft");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(page.getByRole("complementary", { name: "AI assistant" }).getByRole("alert")).toContainText("Couldn't confirm");

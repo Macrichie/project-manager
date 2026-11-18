@@ -13,11 +13,11 @@ test.beforeEach(async ({ page }) => {
 test("add a card with priority, labels, and due date", async ({ page }) => {
   await page.getByRole("button", { name: "New card in Ideas" }).click();
   await page.getByLabel("Title").fill("Enhanced Card");
-  await page.getByLabel("Details").fill("Card with metadata");
+  await page.getByRole("textbox", { name: "Details (optional)" }).fill("Card with metadata");
   await page.getByLabel(/Priority/).selectOption("high");
   await page.getByPlaceholder("e.g. bug, urgent").fill("feature, v2");
   await page.getByLabel(/Due date/).fill("2026-12-25");
-  await page.getByRole("button", { name: "Add card" }).click();
+  await page.getByRole("button", { name: "Add card", exact: true }).click();
   // Verify visual indicators
   await expect(page.getByText("high")).toBeVisible();
   await expect(page.getByText("feature")).toBeVisible();
@@ -42,7 +42,7 @@ test("filter cards by priority", async ({ page }) => {
   await page.getByRole("button", { name: "New card in Ideas" }).click();
   await page.getByLabel("Title").fill("Urgent Bug");
   await page.getByLabel(/Priority/).selectOption("high");
-  await page.getByRole("button", { name: "Add card" }).click();
+  await page.getByRole("button", { name: "Add card", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Urgent Bug" })).toBeVisible();
   // Filter by high priority
   await page.getByRole("button", { name: "Filter cards" }).click();
@@ -58,7 +58,7 @@ test("overdue card shows overdue styling", async ({ page }) => {
   await page.getByRole("button", { name: "New card in To do" }).click();
   await page.getByLabel("Title").fill("Past Due Task");
   await page.getByLabel(/Due date/).fill("2024-01-01");
-  await page.getByRole("button", { name: "Add card" }).click();
+  await page.getByRole("button", { name: "Add card", exact: true }).click();
   const dueElement = page.locator(".card-due.overdue");
   await expect(dueElement).toBeVisible();
   // Clean up

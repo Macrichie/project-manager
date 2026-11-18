@@ -53,3 +53,6 @@ A working MVP of the frontend has been built and is already in frontend. This is
 
 All documents for planning and executing this project will be in the docs/ directory.
 Please review the docs/PLAN.md document before proceeding.
+
+## Detailed Plan
+The detailed plan for the project is in docs/PLAN.md. Please review it before proceeding.

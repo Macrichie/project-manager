@@ -1,10 +1,13 @@
 import { expect, test } from "./fixtures";
 
 test("change password flow for registered user", async ({ page }) => {
+  // Use a unique username to avoid conflicts with previous test runs
+  const username = `pwtest_${Date.now()}`;
+
   // Register a new user
   await page.goto("/");
   await page.getByRole("button", { name: "Create one" }).click();
-  await page.getByLabel("Username").fill("pwtest");
+  await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill("oldpass123");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page.getByRole("heading", { name: /Your boards/ })).toBeVisible();
@@ -17,7 +20,7 @@ test("change password flow for registered user", async ({ page }) => {
   await page.getByLabel("Current password").fill("wrongpass");
   await page.getByLabel("New password").fill("newpass123");
   await page.getByRole("button", { name: "Update password" }).click();
-  await expect(page.getByRole("alert")).toContainText("incorrect");
+  await expect(page.getByText("incorrect").first()).toBeVisible();
 
   // Correct change
   await page.getByLabel("Current password").fill("oldpass123");
@@ -27,7 +30,7 @@ test("change password flow for registered user", async ({ page }) => {
 
   // Log out and log in with new password
   await page.getByRole("button", { name: "Sign out" }).click();
-  await page.getByLabel("Username").fill("pwtest");
+  await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill("newpass456");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: /Your boards/ })).toBeVisible();

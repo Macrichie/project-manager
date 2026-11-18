@@ -31,11 +31,20 @@ async function keyboardMove(page: Page, title: string, key: string, targetId: st
   await page.keyboard.press(cancel ? "Escape" : "Space");
   await expect(handle).not.toHaveAttribute("aria-pressed", "true");
 }
+async function navigateToBoard(page: import("@playwright/test").Page) {
+  // After login, may land on boards list or directly on board (if hash persists)
+  await expect(page.getByRole("heading", { name: /Your boards/ }).or(page.getByRole("region").first())).toBeVisible();
+  if (await page.getByRole("heading", { name: /Your boards/ }).isVisible()) {
+    await page.getByText("My Board").first().click();
+  }
+  await expect(page.getByRole("region")).toHaveCount(5);
+}
+
 test.beforeEach(async ({ page }) => {
   const login = await page.request.post("/api/auth/login", { data: { username: "user", password: "password" } });
   expect(login.status()).toBe(200);
   await page.goto("/");
-  await expect(page.getByRole("region")).toHaveCount(5);
+  await navigateToBoard(page);
 });
 test("full workflow persists edits, rename, deletion, and exact order after refresh and login", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
@@ -75,6 +84,7 @@ test("full workflow persists edits, rename, deletion, and exact order after refr
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByLabel("Username").fill("user"); await page.getByLabel("Password").fill("password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await navigateToBoard(page);
   await expect(page.getByRole("region", { name: "Next up", exact: true }).getByRole("heading", { level: 3 })).toHaveText(["Map the core journey", "Find our visual rhythm", "Edited card"]);
   expect(errors).toEqual([]);
 });
@@ -110,6 +120,7 @@ test("layout and visual capture", async ({ page }, testInfo) => {
 test("a stale tab reloads saved work and keeps the edit draft for review", async ({ page, context }) => {
   const second = await context.newPage();
   await second.goto("/");
+  await navigateToBoard(second);
   await second.getByRole("button", { name: "Edit A warmer welcome", exact: true }).click();
   await second.getByLabel("Title").fill("Draft from another tab");
   await page.getByRole("button", { name: "Rename Ideas", exact: true }).click();
@@ -146,17 +157,19 @@ test("loads an empty saved board and updates completion when adding to Done", as
 });
 test("touch dragging between columns", async ({ page, context }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "Touch scenario uses the mobile viewport.");
-  // Keep both columns visible without holding the finger in the auto-scroll zone.
-  await page.locator(".board-scroll").evaluate(element => element.scrollLeft = 110);
-  const handle = page.getByRole("button", { name: "Move A warmer welcome", exact: true });
-  const from = (await handle.boundingBox())!;
+  // On mobile, columns stack vertically. Scroll the "To do" column into view.
   const target = page.getByRole("region", { name: "To do", exact: true });
+  await target.scrollIntoViewIfNeeded();
+  const handle = page.getByRole("button", { name: "Move A warmer welcome", exact: true });
+  await handle.scrollIntoViewIfNeeded();
+  const from = (await handle.boundingBox())!;
   const to = (await target.boundingBox())!;
   const client = await context.newCDPSession(page);
   const x = from.x + from.width / 2; const y = from.y + from.height / 2;
-  const endX = Math.min(to.x + 60, 370);
+  // Drag vertically down into the "To do" column area
+  const endY = to.y + 100;
   await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
-  for (let i = 1; i <= 15; i++) await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + (endX - x) * i / 15, y: y + 25 * i / 15 }] });
+  for (let i = 1; i <= 20; i++) await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + (endY - y) * i / 20 }] });
   await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await expect(target.getByRole("heading", { name: "A warmer welcome" })).toBeVisible();
 });
